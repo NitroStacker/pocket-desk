@@ -10,6 +10,7 @@ import {
 } from "./config.js";
 import { InputController } from "./input.js";
 import { IconController, type IconTarget } from "./icons.js";
+import { FileBrowserController, isSafeRequestId, parseFileOperation } from "./files.js";
 import { captureSemanticSnapshot, type SemanticSnapshot, type SemanticWindow } from "./semantic.js";
 import { createRelaySession } from "./session.js";
 import { ShellController } from "./shell.js";
@@ -37,6 +38,7 @@ let socket: WebSocket | null = null;
 let viewerCount = 0;
 let reconnectAttempt = 0;
 let shuttingDown = false;
+let heartbeatTimer: NodeJS.Timeout | null = null;
 let desktopMeta: (CaptureMeta & CaptureSettings & { machineName: string; profile: CaptureProfile }) | null = null;
 let semanticRequest: Promise<void> | null = null;
 let semanticRescanRequested = false;
@@ -57,6 +59,7 @@ let pendingLaunch: {
 const input = new InputController();
 input.start();
 const shell = new ShellController();
+const files = new FileBrowserController();
 const icons = new IconController();
 const visuals = new VisualController();
 const camera = new CameraController();
@@ -104,12 +107,28 @@ function connect(): void {
     handshakeTimeout: 15_000,
   });
   socket = next;
+  let lastPongAt = Date.now();
 
   next.on("open", () => {
     reconnectAttempt = 0;
     console.log("Connected securely to the Cloudflare relay.");
+    clearHeartbeat();
+    lastPongAt = Date.now();
+    heartbeatTimer = setInterval(() => {
+      if (socket !== next || next.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - lastPongAt > 45_000) {
+        console.error("[relay] heartbeat timed out; reconnecting.");
+        next.terminate();
+        return;
+      }
+      next.ping();
+    }, 15_000);
     if (desktopMeta) sendJson({ type: "desktop-meta", payload: desktopMeta });
     sendJson({ type: "host-status", online: true });
+  });
+
+  next.on("pong", () => {
+    lastPongAt = Date.now();
   });
 
   next.on("message", (data, isBinary) => {
@@ -122,6 +141,7 @@ function connect(): void {
   });
 
   next.on("close", (code, reason) => {
+    if (socket === next) clearHeartbeat();
     viewerCount = 0;
     if (shuttingDown) return;
     const delay = Math.min(10_000, 1_000 * 2 ** reconnectAttempt);
@@ -230,6 +250,34 @@ function handleRelayMessage(raw: string): void {
 
   if (message.type === "request-icons" && isRecord(message.payload)) {
     void sendRequestedIcons(message.payload.keys);
+    return;
+  }
+
+  if (message.type === "request-files" && isRecord(message.payload)) {
+    const directoryId = message.payload.directoryId;
+    if (directoryId === null || typeof directoryId === "string") {
+      void sendFileSnapshot(directoryId);
+    }
+    return;
+  }
+
+  if (message.type === "request-file-thumbnails" && isRecord(message.payload)) {
+    void sendFileThumbnails(message.payload.ids);
+    return;
+  }
+
+  if (message.type === "file-operation" && isRecord(message.payload)) {
+    void runFileOperation(message.payload);
+    return;
+  }
+
+  if (message.type === "open-file" && isRecord(message.payload)) {
+    void openFileItem(message.payload.id);
+    return;
+  }
+
+  if (message.type === "request-file-download" && isRecord(message.payload)) {
+    void sendFileDownload(message.payload.id, message.payload.requestId);
     return;
   }
 
@@ -478,6 +526,81 @@ async function launchShellItem(id: unknown): Promise<void> {
   }
 }
 
+async function sendFileSnapshot(directoryId: string | null): Promise<void> {
+  try {
+    const snapshot = await files.browse(directoryId);
+    sendJson({ type: "files-snapshot", payload: snapshot });
+  } catch (error) {
+    console.error(`[files] ${internalError(error)}`);
+    sendJson({
+      type: "error",
+      code: "FILES_BROWSE_FAILED",
+      message: error instanceof Error ? error.message : "That folder could not be opened.",
+    });
+  }
+}
+
+async function sendFileThumbnails(value: unknown): Promise<void> {
+  if (!Array.isArray(value)) return;
+  const ids = [...new Set(value.filter((id): id is string => files.isKnownId(id)))].slice(0, 36);
+  const pending = [...ids];
+  const workers = Array.from({ length: Math.min(4, pending.length) }, async () => {
+    for (;;) {
+      const id = pending.shift();
+      if (!id) return;
+      try {
+        const thumbnail = await files.thumbnail(id);
+        if (thumbnail) sendJson({ type: "file-thumbnail", payload: thumbnail });
+      } catch (error) {
+        console.error(`[thumbnail] ${internalError(error)}`);
+      }
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function runFileOperation(payload: Record<string, unknown>): Promise<void> {
+  const requestId = payload.requestId;
+  if (!isSafeRequestId(requestId)) return;
+  const operation = parseFileOperation(payload);
+  if (!operation) {
+    sendJson({ type: "file-operation-result", payload: { requestId, ok: false, message: "That file action was invalid." } });
+    return;
+  }
+  try {
+    const message = await files.operate(operation);
+    sendJson({ type: "file-operation-result", payload: { requestId, ok: true, message } });
+  } catch (error) {
+    console.error(`[files] ${internalError(error)}`);
+    sendJson({
+      type: "file-operation-result",
+      payload: { requestId, ok: false, message: error instanceof Error ? error.message : "The file action failed." },
+    });
+  }
+}
+
+async function openFileItem(id: unknown): Promise<void> {
+  if (!files.isKnownId(id)) return;
+  try {
+    await files.open(id);
+  } catch (error) {
+    sendJson({ type: "error", code: "FILE_OPEN_FAILED", message: error instanceof Error ? error.message : "Windows could not open that item." });
+  }
+}
+
+async function sendFileDownload(id: unknown, requestId: unknown): Promise<void> {
+  if (!files.isKnownId(id) || !isSafeRequestId(requestId)) return;
+  try {
+    await files.streamDownload(id, requestId, sendJsonAsync);
+  } catch (error) {
+    console.error(`[download] ${internalError(error)}`);
+    sendJson({
+      type: "file-download-error",
+      payload: { requestId, message: error instanceof Error ? error.message : "The file could not be downloaded." },
+    });
+  }
+}
+
 function publishSemanticSnapshot(snapshot: SemanticSnapshot): void {
   semanticWindowsByHandle = new Map(
     snapshot.windows.map((window) => [window.windowHandle, window]),
@@ -542,6 +665,22 @@ function sendJson(value: unknown): void {
   }
 }
 
+function sendJsonAsync(value: unknown): Promise<void> {
+  const current = socket;
+  if (!current || current.readyState !== WebSocket.OPEN) {
+    return Promise.reject(new Error("The relay is not connected."));
+  }
+  return new Promise((resolve, reject) => {
+    current.send(JSON.stringify(value), (error) => error ? reject(error) : resolve());
+  });
+}
+
+function clearHeartbeat(): void {
+  if (!heartbeatTimer) return;
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -564,6 +703,7 @@ function shutdown(): void {
   capture.stop();
   input.stop();
   camera.stop();
+  clearHeartbeat();
   if (semanticRefreshTimer) clearTimeout(semanticRefreshTimer);
   socket?.close(1000, "Host stopped");
   setTimeout(() => process.exit(0), 250);

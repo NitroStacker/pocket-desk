@@ -177,7 +177,7 @@ const styles = StyleSheet.create({
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sectionTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
   sectionBody: { color: colors.textMuted, fontSize: 12, marginTop: 4 },
-  gesture: { color: colors.primaryBright, fontSize: 28 },
+  gesture: { color: colors.textMuted, fontSize: 28 },
   trackpad: {
     height: 154,
     borderRadius: radii.large,
@@ -188,7 +188,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  trackpadMark: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, borderColor: colors.primaryBright },
+  trackpadMark: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, borderColor: colors.textMuted },
   trackpadLabel: { color: colors.textMuted, fontSize: 9, fontWeight: '800', letterSpacing: 1.3, marginTop: 10 },
   mouseRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
   actionButton: {
@@ -210,7 +210,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
-  buttonGlyph: { color: colors.primaryBright, fontSize: 18 },
+  buttonGlyph: { color: colors.textMuted, fontSize: 18 },
   buttonText: { color: colors.text, fontSize: 11, fontWeight: '700' },
   overline: { color: colors.textMuted, fontSize: 10, fontWeight: '900', letterSpacing: 1.2, marginTop: 22, marginBottom: 9 },
   composerRow: { flexDirection: 'row', gap: 8 },
@@ -225,7 +225,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   sendButton: { minWidth: 72, borderRadius: radii.medium, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
-  sendText: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  sendText: { color: colors.inverseText, fontSize: 13, fontWeight: '800' },
   shortcutRow: { gap: 8, paddingRight: 16 },
   shortcut: { paddingHorizontal: 14, paddingVertical: 11, backgroundColor: colors.surfaceRaised, borderRadius: radii.small },
   shortcutText: { color: colors.text, fontSize: 12, fontWeight: '700' },
@@ -233,5 +233,5 @@ const styles = StyleSheet.create({
   profile: { flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center' },
   profileActive: { backgroundColor: colors.primary },
   profileText: { color: colors.textMuted, fontSize: 11, fontWeight: '800' },
-  profileTextActive: { color: colors.text },
+  profileTextActive: { color: colors.inverseText },
 });

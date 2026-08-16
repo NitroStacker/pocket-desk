@@ -10,6 +10,13 @@ const HOST_MESSAGE_TYPES = new Set([
   "host-status",
   "pong",
   "error",
+  "files-snapshot",
+  "file-thumbnail",
+  "file-operation-result",
+  "file-download-start",
+  "file-download-chunk",
+  "file-download-end",
+  "file-download-error",
 ]);
 
 const VIEWER_MESSAGE_TYPES = new Set([
@@ -25,6 +32,11 @@ const VIEWER_MESSAGE_TYPES = new Set([
   "set-quality",
   "set-stream",
   "ping",
+  "request-files",
+  "request-file-thumbnails",
+  "file-operation",
+  "open-file",
+  "request-file-download",
 ]);
 
 export function isAllowedRelayMessage(

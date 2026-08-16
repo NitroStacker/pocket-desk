@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { encode } from 'base64-arraybuffer';
+import { decode, encode } from 'base64-arraybuffer';
+import { Directory, File, Paths, type FileHandle } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { buildSocketUrl, parsePairingDetails } from '../lib/pairing';
 import type {
   AppVisual,
@@ -8,6 +10,10 @@ import type {
   CaptureProfile,
   ConnectionStatus,
   DesktopMeta,
+  FileBrowserSnapshot,
+  FileDownloadState,
+  FileOperationRequest,
+  FileOperationState,
   InputCommand,
   PairingDetails,
   RemoteSessionApi,
@@ -18,6 +24,7 @@ import type {
 
 interface RelayMessage {
   type?: string;
+  code?: unknown;
   payload?: unknown;
   hostOnline?: unknown;
   viewerCount?: unknown;
@@ -37,6 +44,12 @@ export function useRemoteSession(): RemoteSessionApi {
   const [appIcons, setAppIcons] = useState<Record<string, string>>({});
   const [appVisual, setAppVisual] = useState<AppVisual | null>(null);
   const [cameraStatus, setCameraStatus] = useState<CameraPtzStatus | null>(null);
+  const [fileSnapshot, setFileSnapshot] = useState<FileBrowserSnapshot | null>(null);
+  const [fileThumbnails, setFileThumbnails] = useState<Record<string, string>>({});
+  const [fileLoading, setFileLoading] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [fileOperation, setFileOperation] = useState<FileOperationState | null>(null);
+  const [fileDownload, setFileDownload] = useState<FileDownloadState | null>(null);
   const [hostOnline, setHostOnline] = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
@@ -48,12 +61,44 @@ export function useRemoteSession(): RemoteSessionApi {
   const streamEnabledRef = useRef(false);
   const iconCacheRef = useRef<Record<string, string>>({});
   const requestedIconsRef = useRef(new Set<string>());
+  const requestedFileThumbnailsRef = useRef(new Set<string>());
+  const fileSnapshotRef = useRef<FileBrowserSnapshot | null>(null);
+  const fileDownloadRef = useRef<FileDownloadState | null>(null);
+  const downloadRef = useRef<{
+    requestId: string;
+    name: string;
+    mimeType: string;
+    total: number;
+    received: number;
+    expectedSequence: number;
+    file: File;
+    handle: FileHandle;
+  } | null>(null);
 
   const clearTimers = useCallback(() => {
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     if (pingTimerRef.current) clearInterval(pingTimerRef.current);
     retryTimerRef.current = null;
     pingTimerRef.current = null;
+  }, []);
+
+  const resetFileState = useCallback(() => {
+    downloadRef.current?.handle.close();
+    downloadRef.current = null;
+    fileSnapshotRef.current = null;
+    fileDownloadRef.current = null;
+    requestedFileThumbnailsRef.current.clear();
+    setFileSnapshot(null);
+    setFileThumbnails({});
+    setFileLoading(false);
+    setFileError(null);
+    setFileOperation(null);
+    setFileDownload(null);
+  }, []);
+
+  const publishFileDownload = useCallback((next: FileDownloadState | null) => {
+    fileDownloadRef.current = next;
+    setFileDownload(next);
   }, []);
 
   const connect = useCallback(
@@ -77,6 +122,7 @@ export function useRemoteSession(): RemoteSessionApi {
       setHasSession(true);
       setStatus('connecting');
       setError(null);
+      resetFileState();
       let attempt = 0;
 
       const handleJsonMessage = (raw: string) => {
@@ -118,10 +164,129 @@ export function useRemoteSession(): RemoteSessionApi {
         } else if (message.type === 'camera-status') {
           const status = parseCameraStatus(message.payload);
           if (status) setCameraStatus(status);
+        } else if (message.type === 'files-snapshot') {
+          const nextSnapshot = parseFileBrowserSnapshot(message.payload);
+          if (nextSnapshot) {
+            fileSnapshotRef.current = nextSnapshot;
+            setFileSnapshot(nextSnapshot);
+            setFileLoading(false);
+            setFileError(null);
+          }
+        } else if (message.type === 'file-thumbnail') {
+          const thumbnail = parseFileThumbnail(message.payload);
+          if (thumbnail) setFileThumbnails((current) => ({ ...current, [thumbnail.id]: thumbnail.dataUri }));
+        } else if (message.type === 'file-operation-result') {
+          const result = parseFileOperationResult(message.payload);
+          if (result) {
+            setFileOperation({ requestId: result.requestId, status: result.ok ? 'success' : 'error', message: result.message });
+            if (result.ok) {
+              const directoryId = fileSnapshotRef.current?.directoryId ?? null;
+              setFileLoading(true);
+              socketRef.current?.send(JSON.stringify({ type: 'request-files', payload: { directoryId } }));
+            }
+          }
+        } else if (message.type === 'file-download-start') {
+          const transfer = parseFileDownloadStart(message.payload);
+          if (transfer && fileDownloadRef.current?.requestId === transfer.requestId) {
+            try {
+              downloadRef.current?.handle.close();
+              const directory = new Directory(Paths.cache, 'PocketDesk');
+              directory.create({ idempotent: true, intermediates: true });
+              const file = new File(directory, safeLocalFileName(transfer.name));
+              file.create({ overwrite: true, intermediates: true });
+              const handle = file.open();
+              downloadRef.current = { ...transfer, received: 0, expectedSequence: 0, file, handle };
+              publishFileDownload({
+                requestId: transfer.requestId,
+                status: 'downloading',
+                name: transfer.name,
+                mimeType: transfer.mimeType,
+                received: 0,
+                total: transfer.total,
+                uri: '',
+                message: '',
+              });
+            } catch (downloadError) {
+              publishFileDownload({
+                requestId: transfer.requestId,
+                status: 'error',
+                name: transfer.name,
+                mimeType: transfer.mimeType,
+                received: 0,
+                total: transfer.total,
+                uri: '',
+                message: downloadError instanceof Error ? downloadError.message : 'Could not create the phone download.',
+              });
+            }
+          }
+        } else if (message.type === 'file-download-chunk') {
+          const chunk = parseFileDownloadChunk(message.payload);
+          const transfer = downloadRef.current;
+          if (chunk && transfer && transfer.requestId === chunk.requestId && transfer.expectedSequence === chunk.sequence) {
+            try {
+              const bytes = new Uint8Array(decode(chunk.data));
+              transfer.handle.writeBytes(bytes);
+              transfer.received += bytes.byteLength;
+              transfer.expectedSequence += 1;
+              if (chunk.sequence % 3 === 0 || transfer.received >= transfer.total) {
+                publishFileDownload({
+                  requestId: transfer.requestId,
+                  status: 'downloading',
+                  name: transfer.name,
+                  mimeType: transfer.mimeType,
+                  received: transfer.received,
+                  total: transfer.total,
+                  uri: '',
+                  message: '',
+                });
+              }
+            } catch (downloadError) {
+              transfer.handle.close();
+              downloadRef.current = null;
+              publishFileDownload({
+                requestId: transfer.requestId,
+                status: 'error',
+                name: transfer.name,
+                mimeType: transfer.mimeType,
+                received: transfer.received,
+                total: transfer.total,
+                uri: '',
+                message: downloadError instanceof Error ? downloadError.message : 'The download could not be written.',
+              });
+            }
+          }
+        } else if (message.type === 'file-download-end') {
+          const ending = parseFileDownloadEnd(message.payload);
+          const transfer = downloadRef.current;
+          if (ending && transfer && transfer.requestId === ending.requestId) {
+            transfer.handle.close();
+            downloadRef.current = null;
+            publishFileDownload({
+              requestId: transfer.requestId,
+              status: 'ready',
+              name: transfer.name,
+              mimeType: transfer.mimeType,
+              received: transfer.received,
+              total: transfer.total,
+              uri: transfer.file.uri,
+              message: 'Ready to save to Files',
+            });
+          }
+        } else if (message.type === 'file-download-error') {
+          const failure = parseFileDownloadError(message.payload);
+          if (failure && fileDownloadRef.current?.requestId === failure.requestId) {
+            downloadRef.current?.handle.close();
+            downloadRef.current = null;
+            publishFileDownload({ ...fileDownloadRef.current, status: 'error', message: failure.message });
+          }
         } else if (message.type === 'pong' && typeof message.timestamp === 'number') {
           setLatencyMs(Math.max(0, Date.now() - message.timestamp));
         } else if (message.type === 'error' && typeof message.message === 'string') {
           setError(message.message);
+          if (typeof message.code === 'string' && message.code.startsWith('FILES_')) {
+            setFileLoading(false);
+            setFileError(message.message);
+          }
         }
       };
 
@@ -141,6 +306,7 @@ export function useRemoteSession(): RemoteSessionApi {
       setError(null);
       iconCacheRef.current = {};
       requestedIconsRef.current.clear();
+      requestedFileThumbnailsRef.current.clear();
       setAppIcons({});
       setAppVisual(null);
       setCameraStatus(null);
@@ -197,7 +363,7 @@ export function useRemoteSession(): RemoteSessionApi {
 
       openSocket();
     },
-    [clearTimers],
+    [clearTimers, publishFileDownload, resetFileState],
   );
 
   const disconnect = useCallback(() => {
@@ -216,12 +382,13 @@ export function useRemoteSession(): RemoteSessionApi {
     setAppIcons({});
     setAppVisual(null);
     setCameraStatus(null);
+    resetFileState();
     iconCacheRef.current = {};
     requestedIconsRef.current.clear();
     setHostOnline(false);
     setViewerCount(0);
     setLatencyMs(null);
-  }, [clearTimers]);
+  }, [clearTimers, resetFileState]);
 
   const send = useCallback((message: unknown) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -277,6 +444,65 @@ export function useRemoteSession(): RemoteSessionApi {
     [send],
   );
 
+  const requestFiles = useCallback((directoryId: string | null) => {
+    setFileLoading(true);
+    setFileError(null);
+    send({ type: 'request-files', payload: { directoryId } });
+  }, [send]);
+
+  const requestFileThumbnails = useCallback((ids: string[]) => {
+    const pending = [...new Set(ids)].filter((id) =>
+      /^fs:[a-f0-9]{24}$/.test(id) &&
+      !fileThumbnails[id] &&
+      !requestedFileThumbnailsRef.current.has(id),
+    ).slice(0, 36);
+    if (!pending.length) return;
+    pending.forEach((id) => requestedFileThumbnailsRef.current.add(id));
+    send({ type: 'request-file-thumbnails', payload: { ids: pending } });
+  }, [fileThumbnails, send]);
+
+  const runFileOperation = useCallback((operation: FileOperationRequest) => {
+    const requestId = createRequestId();
+    setFileOperation({ requestId, status: 'running', message: 'Working…' });
+    send({ type: 'file-operation', payload: { requestId, ...operation } });
+  }, [send]);
+
+  const openFile = useCallback((id: string) => {
+    send({ type: 'open-file', payload: { id } });
+  }, [send]);
+
+  const downloadFile = useCallback((id: string) => {
+    downloadRef.current?.handle.close();
+    downloadRef.current = null;
+    const requestId = createRequestId();
+    publishFileDownload({
+      requestId,
+      status: 'waiting',
+      name: '',
+      mimeType: '',
+      received: 0,
+      total: 0,
+      uri: '',
+      message: 'Preparing download…',
+    });
+    send({ type: 'request-file-download', payload: { id, requestId } });
+  }, [publishFileDownload, send]);
+
+  const shareDownloadedFile = useCallback(async () => {
+    if (!fileDownload?.uri || fileDownload.status !== 'ready') return;
+    if (!(await Sharing.isAvailableAsync())) {
+      publishFileDownload({ ...fileDownload, status: 'error', message: 'The phone share sheet is unavailable.' });
+      return;
+    }
+    await Sharing.shareAsync(fileDownload.uri, {
+      dialogTitle: `Save ${fileDownload.name}`,
+      mimeType: fileDownload.mimeType || undefined,
+    });
+  }, [fileDownload, publishFileDownload]);
+
+  const clearFileOperation = useCallback(() => setFileOperation(null), []);
+  const clearFileDownload = useCallback(() => publishFileDownload(null), [publishFileDownload]);
+
   const sendCameraControl = useCallback(
     (command: CameraControlCommand) => send({ type: 'camera-control', payload: command }),
     [send],
@@ -310,6 +536,12 @@ export function useRemoteSession(): RemoteSessionApi {
     appIcons,
     appVisual,
     cameraStatus,
+    fileSnapshot,
+    fileThumbnails,
+    fileLoading,
+    fileError,
+    fileOperation,
+    fileDownload,
     hostOnline,
     viewerCount,
     latencyMs,
@@ -323,10 +555,129 @@ export function useRemoteSession(): RemoteSessionApi {
     requestIcons,
     requestAppVisual,
     requestCameraStatus,
+    requestFiles,
+    requestFileThumbnails,
+    runFileOperation,
+    openFile,
+    downloadFile,
+    shareDownloadedFile,
+    clearFileOperation,
+    clearFileDownload,
     sendCameraControl,
     setQuality,
     setStreamEnabled,
   };
+}
+
+function parseFileBrowserSnapshot(value: unknown): FileBrowserSnapshot | null {
+  if (
+    !isRecord(value) ||
+    (value.directoryId !== null && typeof value.directoryId !== 'string') ||
+    typeof value.name !== 'string' ||
+    typeof value.pathLabel !== 'string' ||
+    (value.parentId !== null && typeof value.parentId !== 'string') ||
+    !Array.isArray(value.breadcrumbs) ||
+    !Array.isArray(value.items)
+  ) return null;
+  const breadcrumbs = value.breadcrumbs.flatMap((crumb) => {
+    if (!isRecord(crumb) || (crumb.id !== null && typeof crumb.id !== 'string') || typeof crumb.name !== 'string') return [];
+    return [{ id: crumb.id as string | null, name: crumb.name }];
+  });
+  const items = value.items.flatMap((entry) => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.id !== 'string' || !/^fs:[a-f0-9]{24}$/.test(entry.id) ||
+      typeof entry.name !== 'string' ||
+      (entry.kind !== 'directory' && entry.kind !== 'file') ||
+      typeof entry.extension !== 'string' ||
+      typeof entry.mimeType !== 'string' ||
+      !finite(entry.size) || !finite(entry.modifiedAt)
+    ) return [];
+    const locationKind = isFileLocationKind(entry.locationKind) ? entry.locationKind : undefined;
+    const kind: 'directory' | 'file' = entry.kind;
+    return [{
+      id: entry.id,
+      name: entry.name,
+      kind,
+      extension: entry.extension,
+      mimeType: entry.mimeType,
+      size: Math.max(0, entry.size),
+      modifiedAt: Math.max(0, entry.modifiedAt),
+      thumbnailAvailable: entry.thumbnailAvailable === true,
+      ...(locationKind ? { locationKind } : {}),
+    }];
+  });
+  return {
+    directoryId: value.directoryId,
+    name: value.name.slice(0, 260),
+    pathLabel: value.pathLabel.slice(0, 2_000),
+    parentId: value.parentId,
+    breadcrumbs,
+    items,
+    truncated: value.truncated === true,
+  };
+}
+
+function parseFileThumbnail(value: unknown): { id: string; dataUri: string } | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' || !/^fs:[a-f0-9]{24}$/.test(value.id) ||
+    typeof value.dataUri !== 'string' || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(value.dataUri) ||
+    value.dataUri.length > 125_000
+  ) return null;
+  return { id: value.id, dataUri: value.dataUri };
+}
+
+function parseFileOperationResult(value: unknown): { requestId: string; ok: boolean; message: string } | null {
+  if (!isRecord(value) || !requestId(value.requestId) || typeof value.ok !== 'boolean' || typeof value.message !== 'string') return null;
+  return { requestId: value.requestId, ok: value.ok, message: value.message.slice(0, 300) };
+}
+
+function parseFileDownloadStart(value: unknown): { requestId: string; name: string; mimeType: string; total: number } | null {
+  if (
+    !isRecord(value) || !requestId(value.requestId) || typeof value.name !== 'string' ||
+    typeof value.mimeType !== 'string' || !finite(value.size) || value.size < 0 || value.size > 250 * 1024 * 1024
+  ) return null;
+  return { requestId: value.requestId, name: value.name.slice(0, 260), mimeType: value.mimeType.slice(0, 120), total: value.size };
+}
+
+function parseFileDownloadChunk(value: unknown): { requestId: string; sequence: number; data: string } | null {
+  if (
+    !isRecord(value) || !requestId(value.requestId) || !finite(value.sequence) ||
+    !Number.isSafeInteger(value.sequence) || value.sequence < 0 ||
+    typeof value.data !== 'string' || value.data.length > 100_000 || !/^[A-Za-z0-9+/=]*$/.test(value.data)
+  ) return null;
+  return { requestId: value.requestId, sequence: value.sequence, data: value.data };
+}
+
+function parseFileDownloadEnd(value: unknown): { requestId: string } | null {
+  return isRecord(value) && requestId(value.requestId) ? { requestId: value.requestId } : null;
+}
+
+function parseFileDownloadError(value: unknown): { requestId: string; message: string } | null {
+  if (!isRecord(value) || !requestId(value.requestId) || typeof value.message !== 'string') return null;
+  return { requestId: value.requestId, message: value.message.slice(0, 300) };
+}
+
+function requestId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9-]{36}$/i.test(value);
+}
+
+function isFileLocationKind(value: unknown): value is NonNullable<FileBrowserSnapshot['items'][number]['locationKind']> {
+  return typeof value === 'string' && ['home', 'desktop', 'documents', 'downloads', 'pictures', 'music', 'videos', 'drive'].includes(value);
+}
+
+function createRequestId(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = character === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
+function safeLocalFileName(value: string): string {
+  const safe = value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim().slice(0, 180);
+  return safe || 'PocketDesk download';
 }
 
 function parseCameraStatus(value: unknown): CameraPtzStatus | null {
