@@ -27,7 +27,7 @@ The phone app runs in Expo Go. Both the phone and the Windows host make outbound
 - A reusable adapter registry with tailored live layouts for Bezi, Chrome, ChatGPT/Codex, Windows Settings, Notepad and common document apps, and Windows Camera
 - Packaged Windows app discovery and real manifest icons, so Camera, Settings, Notepad, and other Microsoft Store apps launch and identify correctly
 - A touch-sized Camera interface with authenticated live preview refresh, mode, shutter, focus, brightness, settings, and camera-roll controls
-- Direct standard-UVC control for the connected EMEET PIXY motor: precise/large pan and tilt moves, zoom, center/home, live position readouts, and three persistent presets
+- Direct control for the connected EMEET PIXY: precise/large pan and tilt moves, zoom, center/home, live position readouts, and three persistent presets. PocketDesk reports the green active-camera light as firmware-controlled because PIXY firmware 2.x does not expose an Off control.
 - Desktop-frame transport is suspended while the semantic workspace is active
 - Smooth, Balanced, and Sharp stream profiles
 - PC-managed trusted devices with 15-minute, one-use add codes
