@@ -279,13 +279,39 @@ function DocumentApplication({ snapshot, visual, onInput, onRefresh }: AppProps)
 }
 
 function CameraApplication({ snapshot, visual, cameraStatus, onInput, onCameraControl, onRefresh }: AppProps) {
+  const [recordingFallback, setRecordingFallback] = useState<{ control: SemanticControl; after: number } | null>(null);
   const controls = accessible(snapshot);
-  const primary = controls.find((control) => control.kind === 'Button' && /^take (photo|video)$/i.test(control.label));
+  const reportedStart = controls.find((control) => control.kind === 'Button' && /^take (photo|video)$/i.test(control.label));
+  const reportedStop = controls.find((control) => control.kind === 'Button' && isCameraStopControl(control.label));
+  const primary = reportedStop ?? recordingFallback?.control ?? reportedStart;
+  const recording = Boolean(reportedStop || recordingFallback);
   const settings = controls.find((control) => control.kind === 'Button' && /open settings/i.test(control.label));
   const adjustments = unique(controls.filter((control) =>
-    control.kind === 'Button' && /focus at|brightness at|switch to|camera roll|prevscene|nextscene|timer|flash|hdr/i.test(control.label),
+    control.kind === 'Button' && /focus at|brightness at|switch to|camera roll|prevscene|nextscene|timer|flash|hdr|pause.*(recording|video)|resume.*(recording|video)/i.test(control.label),
   ));
-  const mode = primary?.label.replace(/^take /i, '') ?? 'camera';
+  const mode = recording ? 'video' : primary?.label.replace(/^take /i, '') ?? 'camera';
+
+  useEffect(() => {
+    if (!recordingFallback || snapshot.capturedAt <= recordingFallback.after) return;
+    // Once Windows exposes a stable capture control, return to its live
+    // coordinates. If recording failed, Take video also clears the fallback.
+    if (reportedStop || reportedStart) setRecordingFallback(null);
+  }, [recordingFallback, reportedStart, reportedStop, snapshot.capturedAt]);
+
+  const capture = () => {
+    if (!primary) return;
+    if (!recording && /^take video$/i.test(primary.label)) {
+      // Stop occupies the same Camera button. Keep it available immediately
+      // while the semantic scan catches up with Windows Camera's animation.
+      setRecordingFallback({ control: { ...primary, label: 'Stop recording' }, after: snapshot.capturedAt });
+    } else if (recording) {
+      setRecordingFallback(null);
+    }
+    activate(primary, onInput, onRefresh, recording ? 320 : 800);
+    // Windows Camera changes its capture controls asynchronously. A second
+    // scan catches the stable Record/Stop state if the first hits the animation.
+    setTimeout(onRefresh, recording ? 950 : 1_800);
+  };
 
   return (
     <View style={[styles.appSurface, styles.cameraSurface]}>
@@ -296,15 +322,61 @@ function CameraApplication({ snapshot, visual, cameraStatus, onInput, onCameraCo
       {visual ? (
         <InteractiveVisualCrop snapshot={snapshot} visual={visual} region={{ left: 0.07, top: 0.055, width: 0.8, height: 0.9, label: 'Live camera preview' }} onInput={onInput} onRefresh={onRefresh} dark />
       ) : <VisualLoading label="Opening the live camera preview" />}
+      <CameraIndicatorControl status={cameraStatus} onControl={onCameraControl} />
       <CameraPtzPanel status={cameraStatus} onControl={onCameraControl} />
       <ControlRail controls={adjustments} onPress={(control) => activate(control, onInput, onRefresh)} compact dark />
       {primary ? (
-        <Pressable onPress={() => activate(primary, onInput, onRefresh, 800)} style={styles.shutterButton} accessibilityLabel={primary.label}>
-          <View style={styles.shutterInner} />
-          <Text style={styles.shutterLabel}>{primary.label}</Text>
+        <Pressable onPress={capture} style={[styles.shutterButton, recording && styles.shutterButtonRecording]} accessibilityLabel={recording ? 'Stop recording' : primary.label}>
+          <View style={[styles.shutterInner, recording && styles.shutterInnerRecording]} />
+          <Text style={[styles.shutterLabel, recording && styles.shutterLabelRecording]}>{recording ? 'Stop recording' : primary.label}</Text>
         </Pressable>
       ) : null}
       <Text style={styles.cameraPrivacy}>The preview and controls stay inside your authenticated PocketDesk session.</Text>
+    </View>
+  );
+}
+
+function CameraIndicatorControl({ status, onControl }: {
+  status: CameraPtzStatus | null;
+  onControl: (command: CameraControlCommand) => void;
+}) {
+  const [pending, setPending] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (pending !== null && status?.indicator.desired === pending) setPending(null);
+  }, [pending, status?.indicator.desired]);
+
+  const enabled = pending ?? status?.indicator.desired ?? false;
+  const detail = !status
+    ? 'Connecting to the camera...'
+    : !status.indicator.supported
+      ? 'The green active-camera light is controlled by PIXY firmware.'
+    : status.indicator.error
+      ? 'Preference saved. PocketDesk will retry when PIXY is available.'
+      : status.indicator.effective === status.indicator.desired
+        ? `Kept ${status.indicator.desired ? 'on' : 'off'} across camera modes.`
+        : 'Applying the saved preference...';
+
+  return (
+    <View style={styles.indicatorCard}>
+      <View style={styles.indicatorCopy}>
+        <Text style={styles.indicatorEyebrow}>INDICATOR LIGHT</Text>
+        <Text style={styles.indicatorTitle}>{status && !status.indicator.supported ? 'Unavailable' : enabled ? 'On' : 'Off'}</Text>
+        <Text style={styles.indicatorDetail}>{detail}</Text>
+        {status?.indicator.error ? <Text style={styles.indicatorError}>{status.indicator.error}</Text> : null}
+      </View>
+      <Switch
+        accessibilityLabel="Camera indicator light"
+        accessibilityHint="Controls the small light below the camera lenses"
+        disabled={!status || !status.indicator.supported}
+        value={enabled}
+        onValueChange={(next) => {
+          setPending(next);
+          onControl({ kind: 'indicatorSet', enabled: next });
+        }}
+        trackColor={{ false: colors.borderStrong, true: colors.primary }}
+        thumbColor={enabled ? colors.inverseText : colors.textMuted}
+      />
     </View>
   );
 }
@@ -557,6 +629,10 @@ function readable(control: SemanticControl): string {
   return (value && value !== control.label.trim() ? value : control.label).replace(/\r\n?/g, '\n').trim();
 }
 
+function isCameraStopControl(label: string): boolean {
+  return /^(stop|end|finish)\b.*\b(recording|video)\b|^(recording|video)\b.*\b(stop|end|finish)\b/i.test(label);
+}
+
 function friendlyLabel(label: string): string {
   if (/^prevscenebutton$/i.test(label)) return 'Previous mode';
   return label.replace(/\. (?:Unmodified|Modified)\.?$/i, '').replace(/\s+/g, ' ').trim();
@@ -651,6 +727,12 @@ const styles = StyleSheet.create({
   cameraTitle: { color: colors.text, fontSize: 19, fontWeight: '800', textTransform: 'capitalize', marginTop: 3 },
   cameraSettings: { height: 40, borderRadius: 12, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
   cameraSettingsText: { color: colors.text, fontSize: 11, fontWeight: '700' },
+  indicatorCard: { minHeight: 98, marginHorizontal: 10, marginTop: 12, borderRadius: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14, paddingVertical: 13, flexDirection: 'row', alignItems: 'center' },
+  indicatorCopy: { flex: 1, paddingRight: 14 },
+  indicatorEyebrow: { color: colors.textMuted, fontSize: 8, letterSpacing: 1.2, fontWeight: '700' },
+  indicatorTitle: { color: colors.text, fontSize: 17, fontWeight: '800', marginTop: 3 },
+  indicatorDetail: { color: colors.textMuted, fontSize: 10, lineHeight: 15, marginTop: 4 },
+  indicatorError: { color: '#FDA4AF', fontSize: 9, lineHeight: 13, marginTop: 4 },
   ptzPanel: { marginHorizontal: 10, marginTop: 12, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 14 },
   ptzLoadingRow: { minHeight: 90, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 11 },
   ptzLoadingText: { color: colors.textMuted, fontSize: 11, fontWeight: '600' },
@@ -688,6 +770,9 @@ const styles = StyleSheet.create({
   shutterButton: { alignSelf: 'center', width: 112, height: 112, borderRadius: 56, borderWidth: 4, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginTop: 18, marginBottom: 12 },
   shutterInner: { width: 82, height: 82, borderRadius: 41, backgroundColor: '#FFFFFF' },
   shutterLabel: { position: 'absolute', bottom: -24, color: '#D9E0EA', fontSize: 10, fontWeight: '800' },
+  shutterButtonRecording: { borderColor: '#FB7185' },
+  shutterInnerRecording: { width: 52, height: 52, borderRadius: 10, backgroundColor: '#F43F5E' },
+  shutterLabelRecording: { color: '#FDA4AF' },
   cameraPrivacy: { color: '#8290A4', fontSize: 9, lineHeight: 14, textAlign: 'center', paddingHorizontal: 38, marginTop: 24, marginBottom: 12 },
   disabled: { opacity: 0.42 },
 });
