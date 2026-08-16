@@ -142,6 +142,53 @@ export interface ShellSearchResults {
   files: ShellFile[];
 }
 
+export type FileLocationKind = 'home' | 'desktop' | 'documents' | 'downloads' | 'pictures' | 'music' | 'videos' | 'drive';
+
+export interface RemoteFileEntry {
+  id: string;
+  name: string;
+  kind: 'directory' | 'file';
+  extension: string;
+  mimeType: string;
+  size: number;
+  modifiedAt: number;
+  thumbnailAvailable: boolean;
+  locationKind?: FileLocationKind;
+}
+
+export interface FileBrowserSnapshot {
+  directoryId: string | null;
+  name: string;
+  pathLabel: string;
+  parentId: string | null;
+  breadcrumbs: Array<{ id: string | null; name: string }>;
+  items: RemoteFileEntry[];
+  truncated: boolean;
+}
+
+export type FileOperationRequest =
+  | { kind: 'copy' | 'move'; sourceIds: string[]; destinationId: string }
+  | { kind: 'rename'; sourceIds: [string]; name: string }
+  | { kind: 'delete'; sourceIds: string[] }
+  | { kind: 'mkdir'; destinationId: string; name: string };
+
+export interface FileOperationState {
+  requestId: string;
+  status: 'running' | 'success' | 'error';
+  message: string;
+}
+
+export interface FileDownloadState {
+  requestId: string;
+  status: 'waiting' | 'downloading' | 'ready' | 'error';
+  name: string;
+  mimeType: string;
+  received: number;
+  total: number;
+  uri: string;
+  message: string;
+}
+
 export type InputCommand =
   | {
       kind: 'pointerDown' | 'pointerMove' | 'pointerUp' | 'tap' | 'doubleClick';
@@ -169,6 +216,12 @@ export interface RemoteSessionApi {
   appIcons: Record<string, string>;
   appVisual: AppVisual | null;
   cameraStatus: CameraPtzStatus | null;
+  fileSnapshot: FileBrowserSnapshot | null;
+  fileThumbnails: Record<string, string>;
+  fileLoading: boolean;
+  fileError: string | null;
+  fileOperation: FileOperationState | null;
+  fileDownload: FileDownloadState | null;
   hostOnline: boolean;
   viewerCount: number;
   latencyMs: number | null;
@@ -182,6 +235,14 @@ export interface RemoteSessionApi {
   requestIcons: (keys: string[]) => void;
   requestAppVisual: (processId: number, windowHandle: number) => void;
   requestCameraStatus: () => void;
+  requestFiles: (directoryId: string | null) => void;
+  requestFileThumbnails: (ids: string[]) => void;
+  runFileOperation: (operation: FileOperationRequest) => void;
+  openFile: (id: string) => void;
+  downloadFile: (id: string) => void;
+  shareDownloadedFile: () => Promise<void>;
+  clearFileOperation: () => void;
+  clearFileDownload: () => void;
   sendCameraControl: (command: CameraControlCommand) => void;
   setQuality: (profile: CaptureProfile) => void;
   setStreamEnabled: (enabled: boolean) => void;

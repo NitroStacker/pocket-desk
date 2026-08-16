@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  LayoutAnimation,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,8 +14,9 @@ import {
   type GestureResponderEvent,
 } from 'react-native';
 import { colors, radii } from '../theme';
-import type { AppVisual, CameraControlCommand, CameraPtzStatus, InputCommand, SemanticControl, SemanticSnapshot } from '../types';
+import type { AppVisual, CameraControlCommand, CameraPtzStatus, FileBrowserSnapshot, FileDownloadState, FileOperationRequest, FileOperationState, InputCommand, SemanticControl, SemanticSnapshot } from '../types';
 import { getAppAdapterKind, SpecializedApplication } from './AppAdapters';
+import { FileExplorerApplication } from './FileExplorerApplication';
 import { RemoteIcon } from './RemoteIcon';
 
 interface Props {
@@ -23,9 +25,23 @@ interface Props {
   cameraStatus: CameraPtzStatus | null;
   hostOnline: boolean;
   icons: Record<string, string>;
+  fileSnapshot: FileBrowserSnapshot | null;
+  fileThumbnails: Record<string, string>;
+  fileLoading: boolean;
+  fileError: string | null;
+  fileOperation: FileOperationState | null;
+  fileDownload: FileDownloadState | null;
   onInput: (command: InputCommand) => void;
   onCameraControl: (command: CameraControlCommand) => void;
   onRefresh: () => void;
+  onBrowseFiles: (directoryId: string | null) => void;
+  onRequestFileThumbnails: (ids: string[]) => void;
+  onFileOperation: (operation: FileOperationRequest) => void;
+  onOpenFile: (id: string) => void;
+  onDownloadFile: (id: string) => void;
+  onShareDownloadedFile: () => Promise<void>;
+  onClearFileOperation: () => void;
+  onClearFileDownload: () => void;
 }
 
 interface InterfaceModel {
@@ -55,10 +71,25 @@ export function SemanticWorkspace({
   cameraStatus,
   hostOnline,
   icons,
+  fileSnapshot,
+  fileThumbnails,
+  fileLoading,
+  fileError,
+  fileOperation,
+  fileDownload,
   onInput,
   onCameraControl,
   onRefresh,
+  onBrowseFiles,
+  onRequestFileThumbnails,
+  onFileOperation,
+  onOpenFile,
+  onDownloadFile,
+  onShareDownloadedFile,
+  onClearFileOperation,
+  onClearFileDownload,
 }: Props) {
+  const [actionsExpanded, setActionsExpanded] = useState(false);
   const activeWindow = snapshot?.windows.find((window) => window.windowHandle === snapshot.activeWindowHandle)
     ?? snapshot?.windows.find((window) => window.active)
     ?? null;
@@ -66,10 +97,17 @@ export function SemanticWorkspace({
   const currentVisual = visual?.windowHandle === snapshot?.activeWindowHandle ? visual : null;
   const adapterKind = activeWindow ? getAppAdapterKind(activeWindow.process, activeWindow.title) : null;
 
+  useEffect(() => setActionsExpanded(false), [snapshot?.activeWindowHandle]);
+
   const activate = (control: SemanticControl) => {
     if (!control.interactive && control.source !== 'vision') return;
     onInput({ kind: 'tap', x: control.x, y: control.y });
     setTimeout(onRefresh, 420);
+  };
+
+  const toggleActions = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setActionsExpanded((current) => !current);
   };
 
   if (!snapshot) {
@@ -106,13 +144,42 @@ export function SemanticWorkspace({
           <Text style={styles.applicationName}>{friendlyProcess(activeWindow.process)}</Text>
           <Text style={styles.windowTitle} numberOfLines={2}>{model.title}</Text>
         </View>
-        <Pressable onPress={onRefresh} style={styles.syncButton} accessibilityLabel="Refresh application interface">
-          <Text style={styles.syncText}>↻</Text>
-        </Pressable>
+        <View style={styles.titleActions}>
+          <Pressable onPress={onRefresh} style={styles.syncButton} accessibilityLabel="Refresh application interface">
+            <Text style={styles.syncText}>↻</Text>
+          </Pressable>
+          <Pressable onPress={toggleActions} style={[styles.syncButton, actionsExpanded && styles.syncButtonActive]} accessibilityLabel="Show application controls" accessibilityState={{ expanded: actionsExpanded }}>
+            <Text style={[styles.moreText, actionsExpanded && styles.moreTextActive]}>•••</Text>
+          </Pressable>
+        </View>
       </View>
 
+      {actionsExpanded ? (
+        <View style={styles.quickMenu}>
+          <View style={styles.quickMenuHeader}><Text style={styles.quickMenuTitle}>Application controls</Text><Text style={styles.quickMenuHint}>Tap outside the app menu to collapse</Text></View>
+          <Pressable onPress={onRefresh} style={styles.quickRefresh}><Text style={styles.quickRefreshGlyph}>↻</Text><Text style={styles.quickRefreshText}>Refresh interface</Text><Text style={styles.quickRefreshChevron}>›</Text></Pressable>
+          {model.menus.length ? <MenuStrip controls={model.menus} onActivate={activate} /> : null}
+          {model.toolbar.length ? <Toolbar controls={model.toolbar} onActivate={activate} /> : null}
+        </View>
+      ) : null}
+
       {adapterKind === 'file-explorer' ? (
-        <FileExplorerApplication snapshot={snapshot} onInput={onInput} onRefresh={onRefresh} />
+        <FileExplorerApplication
+          snapshot={fileSnapshot}
+          thumbnails={fileThumbnails}
+          loading={fileLoading}
+          error={fileError}
+          operation={fileOperation}
+          download={fileDownload}
+          onBrowse={onBrowseFiles}
+          onRequestThumbnails={onRequestFileThumbnails}
+          onOperate={onFileOperation}
+          onOpen={onOpenFile}
+          onDownload={onDownloadFile}
+          onShareDownload={onShareDownloadedFile}
+          onClearOperation={onClearFileOperation}
+          onClearDownload={onClearFileDownload}
+        />
       ) : adapterKind ? (
         <SpecializedApplication kind={adapterKind} snapshot={snapshot} visual={currentVisual} cameraStatus={cameraStatus} onInput={onInput} onCameraControl={onCameraControl} onRefresh={onRefresh} />
       ) : model.useVisualLayout ? (
@@ -120,8 +187,6 @@ export function SemanticWorkspace({
       ) : (
         <>
           {model.tabs.length ? <TabStrip controls={model.tabs} onActivate={activate} /> : null}
-          {model.menus.length ? <MenuStrip controls={model.menus} onActivate={activate} /> : null}
-          {model.toolbar.length ? <Toolbar controls={model.toolbar} onActivate={activate} /> : null}
           {model.sideNavigation.length ? <NavigationStrip controls={model.sideNavigation} onActivate={activate} /> : null}
           {model.mainSurface ? <MainSurface control={model.mainSurface} onInput={onInput} onRefresh={onRefresh} /> : null}
           {model.rows.map((row, index) => (
@@ -134,11 +199,13 @@ export function SemanticWorkspace({
   );
 }
 
-function FileExplorerApplication({ snapshot, onInput, onRefresh }: {
+function LegacyFileExplorerApplication({ snapshot, onInput, onRefresh }: {
   snapshot: SemanticSnapshot;
   onInput: (command: InputCommand) => void;
   onRefresh: () => void;
 }) {
+  const [locationExpanded, setLocationExpanded] = useState(false);
+  const [actionsExpanded, setActionsExpanded] = useState(false);
   const controls = snapshot.controls.filter((control) => control.source === 'accessibility');
   const address = controls.find((control) => control.kind === 'Edit' && /address bar/i.test(control.label));
   const search = controls.find((control) => control.kind === 'Edit' && /^search/i.test(control.label));
@@ -152,81 +219,120 @@ function FileExplorerApplication({ snapshot, onInput, onRefresh }: {
   const contentTabs = uniqueByLabel(controls.filter((control) => control.kind === 'TabItem' && control.top > 0.2));
   const items = uniqueByLabel(controls.filter((control) => control.kind === 'ListItem' && control.top > 0.2));
   const status = controls.find((control) => control.kind === 'Text' && control.top > 0.92 && /\d+\s+items?/i.test(control.label));
+  const folderName = explorerFolderName(snapshot.activeTitle, address?.value || address?.label || '');
+  const location = (address?.value || address?.label || folderName).replace(/^address bar,?\s*/i, '').trim();
 
   const activate = (control: SemanticControl, kind: 'tap' | 'doubleClick' = 'tap') => {
     onInput({ kind, x: control.x, y: control.y });
     setTimeout(onRefresh, kind === 'doubleClick' ? 700 : 420);
   };
 
+  const toggleLocation = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setLocationExpanded((current) => !current);
+  };
+
+  const toggleActions = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setActionsExpanded((current) => !current);
+  };
+
   return (
     <View style={styles.explorerSurface}>
-      <View style={styles.explorerNavRow}>
-        {navigation.map((control) => (
-          <Pressable key={control.id} disabled={!control.enabled} onPress={() => activate(control)} style={[styles.explorerNavButton, !control.enabled && styles.disabled]}>
-            <Text style={styles.explorerNavText}>{explorerNavLabel(control.label)}</Text>
-          </Pressable>
-        ))}
+      <View style={styles.explorerHero}>
+        <View style={styles.explorerHeroCopy}>
+          <Text style={styles.explorerEyebrow}>Browse</Text>
+          <Text style={styles.explorerTitle} numberOfLines={1}>{folderName}</Text>
+        </View>
+        <Pressable onPress={toggleActions} style={[styles.explorerMore, actionsExpanded && styles.explorerMoreActive]} accessibilityLabel="Show file actions" accessibilityState={{ expanded: actionsExpanded }}>
+          <Text style={[styles.explorerMoreText, actionsExpanded && styles.explorerMoreTextActive]}>•••</Text>
+        </Pressable>
       </View>
 
-      {address ? <ExplorerField key={address.id} control={address} placeholder="Type a folder path" action="Go" onInput={onInput} onRefresh={onRefresh} /> : null}
-      {search ? <ExplorerField key={search.id} control={search} placeholder={search.label} action="Search" onInput={onInput} onRefresh={onRefresh} submit /> : null}
+      <View style={styles.explorerNavRow}>
+        {navigation.map((control) => (
+          <Pressable key={control.id} disabled={!control.enabled} onPress={() => activate(control)} style={[styles.explorerNavButton, !control.enabled && styles.disabled]} accessibilityLabel={explorerNavLabel(control.label)}>
+            <Text style={styles.explorerNavText}>{explorerNavGlyph(control.label)}</Text>
+          </Pressable>
+        ))}
+        {address ? (
+          <Pressable onPress={toggleLocation} style={[styles.explorerLocation, locationExpanded && styles.explorerLocationActive]} accessibilityState={{ expanded: locationExpanded }}>
+            <Text style={styles.explorerLocationGlyph}>⌂</Text>
+            <Text style={[styles.explorerLocationText, locationExpanded && styles.explorerLocationTextActive]} numberOfLines={1}>{location || folderName}</Text>
+            <Text style={[styles.explorerLocationChevron, locationExpanded && styles.explorerLocationChevronActive]}>⌄</Text>
+          </Pressable>
+        ) : null}
+      </View>
 
-      {commands.length ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.explorerCommands} contentContainerStyle={styles.explorerCommandsContent}>
-          {commands.map((control) => (
-            <Pressable key={control.id} disabled={!control.enabled} onPress={() => activate(control)} style={[styles.explorerCommand, !control.enabled && styles.disabled]}>
-              <Text style={styles.explorerCommandText}>{control.label}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+      {locationExpanded && address ? <ExplorerField key={address.id} control={address} placeholder="Enter a folder path" action="Go" onInput={onInput} onRefresh={onRefresh} /> : null}
+      {search ? <ExplorerField key={search.id} control={search} placeholder={`Search ${folderName}`} action="Go" onInput={onInput} onRefresh={onRefresh} submit searchMode /> : null}
+
+      {actionsExpanded && commands.length ? (
+        <View style={styles.explorerActionsPanel}>
+          <Text style={styles.explorerActionsTitle}>File actions</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.explorerCommands} contentContainerStyle={styles.explorerCommandsContent}>
+            {commands.map((control) => (
+              <Pressable key={control.id} disabled={!control.enabled} onPress={() => activate(control)} style={[styles.explorerCommand, !control.enabled && styles.disabled]}>
+                <Text style={styles.explorerCommandGlyph}>{explorerCommandGlyph(control.label)}</Text>
+                <Text style={styles.explorerCommandText} numberOfLines={1}>{control.label}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
       ) : null}
 
       {contentTabs.length ? (
-        <View style={styles.explorerTabs}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.explorerTabsRail} contentContainerStyle={styles.explorerTabs}>
           {contentTabs.map((control) => (
-            <Pressable key={control.id} onPress={() => activate(control)} style={[styles.explorerTab, control.selected && styles.explorerTabSelected]}>
-              <Text style={[styles.explorerTabText, control.selected && styles.explorerTabTextSelected]}>{control.label}</Text>
-            </Pressable>
-          ))}
-        </View>
+              <Pressable key={control.id} onPress={() => activate(control)} style={[styles.explorerTab, control.selected && styles.explorerTabSelected]}>
+                <Text style={[styles.explorerTabText, control.selected && styles.explorerTabTextSelected]}>{control.label}</Text>
+              </Pressable>
+            ))}
+        </ScrollView>
       ) : null}
 
       <View style={styles.explorerListHeader}>
         <Text style={styles.explorerListTitle}>{explorerSectionTitle(items)}</Text>
-        {status ? <Text style={styles.explorerCount}>{status.label}</Text> : null}
+        <Text style={styles.explorerCount}>{status?.label ?? `${items.length} items`}</Text>
       </View>
-      {items.length ? items.map((item) => {
-        const detail = explorerItemDetail(item, controls);
-        return (
-          <Pressable
-            key={item.id}
-            onPress={() => activate(item, 'doubleClick')}
-            onLongPress={() => activate(item)}
-            style={[styles.explorerItem, item.selected && styles.explorerItemSelected]}
-          >
-            <View style={styles.explorerItemIcon}><Text style={styles.explorerItemIconText}>{/\.[a-z0-9]{1,8}$/i.test(item.label) ? 'F' : 'D'}</Text></View>
-            <View style={styles.explorerItemCopy}>
-              <Text style={styles.explorerItemTitle} numberOfLines={2}>{item.label}</Text>
-              {detail ? <Text style={styles.explorerItemDetail} numberOfLines={2}>{detail}</Text> : null}
-            </View>
-            <Text style={styles.explorerOpen}>OPEN</Text>
-          </Pressable>
-        );
-      }) : (
+      {items.length ? (
+        <View style={styles.explorerListGroup}>
+          {items.map((item, index) => {
+            const detail = explorerItemDetail(item, controls);
+            const isFile = /\.[a-z0-9]{1,8}$/i.test(item.label);
+            return (
+              <Pressable
+                key={item.id}
+                onPress={() => activate(item, 'doubleClick')}
+                onLongPress={() => activate(item)}
+                style={[styles.explorerItem, index < items.length - 1 && styles.explorerItemDivider, item.selected && styles.explorerItemSelected]}
+              >
+                <View style={[styles.explorerItemIcon, isFile && styles.explorerFileIcon]}><Text style={[styles.explorerItemIconText, isFile && styles.explorerFileIconText]}>{explorerItemMark(item.label)}</Text></View>
+                <View style={styles.explorerItemCopy}>
+                  <Text style={styles.explorerItemTitle} numberOfLines={1}>{item.label}</Text>
+                  <Text style={styles.explorerItemDetail} numberOfLines={1}>{detail || (isFile ? explorerFileType(item.label) : 'Folder')}</Text>
+                </View>
+                <Text style={styles.explorerOpen}>›</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : (
         <View style={styles.explorerEmpty}><Text style={styles.explorerEmptyText}>This folder has no exposed items.</Text></View>
       )}
-      <Text style={styles.explorerHint}>Tap to open. Press and hold to select.</Text>
+      <Text style={styles.explorerHint}>Tap to open · Press and hold to select</Text>
     </View>
   );
 }
 
-function ExplorerField({ control, placeholder, action, onInput, onRefresh, submit = false }: {
+function ExplorerField({ control, placeholder, action, onInput, onRefresh, submit = false, searchMode = false }: {
   control: SemanticControl;
   placeholder: string;
   action: string;
   onInput: (command: InputCommand) => void;
   onRefresh: () => void;
   submit?: boolean;
+  searchMode?: boolean;
 }) {
   const [value, setValue] = useState(control.value.trim());
   const update = () => {
@@ -236,8 +342,9 @@ function ExplorerField({ control, placeholder, action, onInput, onRefresh, submi
     setTimeout(onRefresh, 700);
   };
   return (
-    <View style={styles.explorerField}>
-      <TextInput value={value} onChangeText={setValue} onSubmitEditing={update} placeholder={placeholder} placeholderTextColor="#7C8798" style={styles.explorerFieldInput} autoCorrect={false} returnKeyType={submit ? 'search' : 'go'} />
+    <View style={[styles.explorerField, searchMode && styles.explorerSearchField]}>
+      {searchMode ? <Text style={styles.explorerSearchGlyph}>⌕</Text> : <Text style={styles.explorerPathGlyph}>⌘</Text>}
+      <TextInput value={value} onChangeText={setValue} onSubmitEditing={update} placeholder={placeholder} placeholderTextColor={colors.textDim} style={styles.explorerFieldInput} autoCorrect={false} returnKeyType={submit ? 'search' : 'go'} />
       <Pressable onPress={update} style={styles.explorerFieldButton}><Text style={styles.explorerFieldButtonText}>{action}</Text></Pressable>
     </View>
   );
@@ -257,6 +364,42 @@ function explorerNavLabel(label: string): string {
   if (/^up to /i.test(label)) return 'Up';
   if (/^refresh/i.test(label)) return 'Refresh';
   return label;
+}
+
+function explorerNavGlyph(label: string): string {
+  if (/^back/i.test(label)) return '‹';
+  if (/^forward/i.test(label)) return '›';
+  if (/^up to /i.test(label)) return '↑';
+  if (/^refresh/i.test(label)) return '↻';
+  return '·';
+}
+
+function explorerCommandGlyph(label: string): string {
+  if (/^new/i.test(label)) return '+';
+  if (/^(copy|paste)/i.test(label)) return '□';
+  if (/^(cut|delete)/i.test(label)) return '−';
+  if (/^share/i.test(label)) return '↑';
+  if (/^(sort|filter)/i.test(label)) return '≡';
+  if (/^(view|details)/i.test(label)) return '▦';
+  if (/^rename/i.test(label)) return '✎';
+  return '•••';
+}
+
+function explorerFolderName(title: string, location: string): string {
+  const normalizedLocation = location.replace(/^address bar,?\s*/i, '').trim().replace(/[\\/]+$/, '');
+  const pathPart = normalizedLocation.split(/[\\/]/).filter(Boolean).pop();
+  if (pathPart && !/address bar/i.test(pathPart)) return pathPart;
+  return title.replace(/\s*[-–]\s*file explorer\s*$/i, '').trim() || 'Files';
+}
+
+function explorerItemMark(label: string): string {
+  const match = label.match(/\.([a-z0-9]{1,5})$/i);
+  return match ? match[1].slice(0, 4).toLocaleUpperCase() : '▰';
+}
+
+function explorerFileType(label: string): string {
+  const match = label.match(/\.([a-z0-9]{1,8})$/i);
+  return match ? `${match[1].toLocaleUpperCase()} file` : 'File';
 }
 
 function explorerSectionTitle(items: SemanticControl[]): string {
@@ -352,7 +495,7 @@ function EditorSurface({ control, onInput, onRefresh }: { control: SemanticContr
         <Text style={styles.editorLabel}>{friendlyEditorLabel(control.label)}</Text>
         <Pressable disabled={!dirty} onPress={apply} style={[styles.applyButton, !dirty && styles.disabled]}><Text style={styles.applyText}>Apply</Text></Pressable>
       </View>
-      <TextInput value={draft} onChangeText={(value) => { setDraft(value); setDirty(value !== initial); }} multiline textAlignVertical="top" autoCorrect={false} spellCheck={false} style={styles.editorInput} placeholder="This application has not exposed its current text yet." placeholderTextColor="#7C8492" />
+      <TextInput value={draft} onChangeText={(value) => { setDraft(value); setDirty(value !== initial); }} multiline textAlignVertical="top" autoCorrect={false} spellCheck={false} style={styles.editorInput} placeholder="This application has not exposed its current text yet." placeholderTextColor={colors.textDim} />
     </View>
   );
 }
@@ -411,7 +554,7 @@ function OptionRow({ control, onActivate }: { control: SemanticControl; onActiva
   return (
     <Pressable onPress={() => onActivate(control)} style={styles.optionRow}>
       <View style={styles.optionCopy}><Text style={styles.optionTitle}>{control.label}</Text>{control.description ? <Text style={styles.optionDescription}>{control.description}</Text> : null}</View>
-      <Switch value={control.checked ?? control.selected} onValueChange={() => onActivate(control)} trackColor={{ false: '#B4BAC4', true: colors.primary }} />
+      <Switch value={control.checked ?? control.selected} onValueChange={() => onActivate(control)} trackColor={{ false: colors.borderStrong, true: colors.primary }} thumbColor={control.checked ?? control.selected ? colors.inverseText : colors.textMuted} />
     </Pressable>
   );
 }
@@ -641,117 +784,155 @@ function friendlyProcess(process: string): string { return process.replace(/[-_]
 function clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: '#F3F5F8' },
-  document: { paddingBottom: 36 },
-  titleBar: { minHeight: 68, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#D9DEE7', flexDirection: 'row', alignItems: 'center' },
+  scroll: { flex: 1, backgroundColor: colors.background },
+  document: { paddingBottom: 28 },
+  titleBar: { minHeight: 64, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', alignItems: 'center' },
   titleCopy: { flex: 1, marginLeft: 10 },
-  applicationName: { color: '#667085', fontSize: 10, fontWeight: '700' },
-  windowTitle: { color: '#101828', fontSize: 14, lineHeight: 18, fontWeight: '800', marginTop: 2 },
-  syncButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF1F6', alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
-  syncText: { color: '#344054', fontSize: 22, fontWeight: '700', marginTop: -2 },
+  applicationName: { color: colors.textMuted, fontSize: 9, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.7 },
+  windowTitle: { color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '700', marginTop: 3 },
+  titleActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  syncButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.surfaceRaised, alignItems: 'center', justifyContent: 'center' },
+  syncButtonActive: { backgroundColor: colors.primary },
+  syncText: { color: colors.textMuted, fontSize: 20, fontWeight: '500', marginTop: -2 },
+  moreText: { color: colors.textMuted, fontSize: 15, fontWeight: '700', letterSpacing: 1 },
+  moreTextActive: { color: colors.inverseText },
+  quickMenu: { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border, paddingTop: 13, paddingBottom: 8 },
+  quickMenuHeader: { paddingHorizontal: 14, marginBottom: 8 },
+  quickMenuTitle: { color: colors.text, fontSize: 13, fontWeight: '700' },
+  quickMenuHint: { color: colors.textDim, fontSize: 9, marginTop: 3 },
+  quickRefresh: { minHeight: 48, marginHorizontal: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11 },
+  quickRefreshGlyph: { width: 32, color: colors.textMuted, fontSize: 19 },
+  quickRefreshText: { flex: 1, color: colors.text, fontSize: 12, fontWeight: '600' },
+  quickRefreshChevron: { color: colors.textDim, fontSize: 21 },
   centerState: { flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center', padding: 34 },
-  chooseIcon: { width: 72, height: 72, borderRadius: 24, backgroundColor: colors.surfaceRaised, alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
-  chooseMark: { color: colors.primaryBright, fontSize: 14, fontWeight: '900' },
-  stateTitle: { color: colors.text, fontSize: 17, fontWeight: '900', textAlign: 'center', marginTop: 14 },
+  chooseIcon: { width: 72, height: 72, borderRadius: 22, backgroundColor: colors.surfaceRaised, alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
+  chooseMark: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  stateTitle: { color: colors.text, fontSize: 17, fontWeight: '800', textAlign: 'center', marginTop: 14 },
   stateBody: { color: colors.textMuted, fontSize: 12, lineHeight: 19, textAlign: 'center', marginTop: 7, maxWidth: 310 },
-  tabStrip: { backgroundColor: '#E9EDF3', borderBottomWidth: 1, borderBottomColor: '#D3D9E3' },
-  tabStripContent: { paddingHorizontal: 8, paddingTop: 7, gap: 5 },
-  appTab: { maxWidth: 230, minHeight: 42, borderTopLeftRadius: 10, borderTopRightRadius: 10, paddingHorizontal: 13, backgroundColor: '#DDE2EA', flexDirection: 'row', alignItems: 'center' },
-  appTabActive: { backgroundColor: '#FFFFFF' },
-  appTabText: { color: '#596273', fontSize: 11, fontWeight: '700', maxWidth: 190 },
-  appTabTextActive: { color: '#101828' },
-  modifiedDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary, marginLeft: 7 },
-  menuStrip: { minHeight: 48, paddingHorizontal: 8, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E2E6ED', flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
-  menuItem: { minHeight: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center' },
-  menuText: { color: '#202939', fontSize: 13, fontWeight: '600' },
-  menuChevron: { color: '#667085', fontSize: 12, marginLeft: 5 },
-  toolbar: { backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#DDE2EA' },
+  tabStrip: { backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border },
+  tabStripContent: { paddingHorizontal: 10, paddingVertical: 8, gap: 6 },
+  appTab: { maxWidth: 230, minHeight: 38, borderRadius: 19, paddingHorizontal: 14, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center' },
+  appTabActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  appTabText: { color: colors.textMuted, fontSize: 10, fontWeight: '600', maxWidth: 190 },
+  appTabTextActive: { color: colors.inverseText, fontWeight: '700' },
+  modifiedDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.inverseText, marginLeft: 7 },
+  menuStrip: { minHeight: 44, paddingHorizontal: 8, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
+  menuItem: { minHeight: 38, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center' },
+  menuText: { color: colors.text, fontSize: 12, fontWeight: '500' },
+  menuChevron: { color: colors.textMuted, fontSize: 11, marginLeft: 5 },
+  toolbar: { backgroundColor: colors.surface },
   toolbarContent: { paddingHorizontal: 9, paddingVertical: 8, gap: 7 },
-  toolButton: { minWidth: 48, maxWidth: 112, minHeight: 44, borderRadius: 10, backgroundColor: '#F3F5F8', borderWidth: 1, borderColor: '#E1E6ED', paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
-  toolButtonActive: { backgroundColor: '#E9E5FF', borderColor: colors.primary },
-  toolText: { color: '#344054', fontSize: 10, lineHeight: 13, fontWeight: '700', textAlign: 'center' },
-  toolTextActive: { color: '#593FD1' },
-  navigation: { backgroundColor: '#F8F9FB', borderBottomWidth: 1, borderBottomColor: '#DDE2EA' },
+  toolButton: { minWidth: 52, maxWidth: 116, minHeight: 42, borderRadius: 12, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center' },
+  toolButtonActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  toolText: { color: colors.textMuted, fontSize: 10, lineHeight: 13, fontWeight: '600', textAlign: 'center' },
+  toolTextActive: { color: colors.inverseText },
+  navigation: { backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border },
   navigationContent: { paddingHorizontal: 10, paddingVertical: 8, gap: 7 },
-  navigationItem: { minHeight: 38, borderRadius: 19, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D9DEE7', justifyContent: 'center', paddingHorizontal: 14 },
-  navigationItemActive: { backgroundColor: '#201A3A', borderColor: '#201A3A' },
-  navigationText: { color: '#344054', fontSize: 11, fontWeight: '700' },
-  navigationTextActive: { color: '#FFFFFF' },
-  editorSurface: { flex: 1, minHeight: 520, backgroundColor: '#FFFFFF' },
-  editorHeader: { height: 52, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#E5E7EB', flexDirection: 'row', alignItems: 'center' },
-  editorLabel: { flex: 1, color: '#475467', fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
-  applyButton: { height: 36, borderRadius: 10, backgroundColor: colors.primary, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
-  applyText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900' },
-  editorInput: { minHeight: 468, backgroundColor: '#FFFFFF', color: '#101828', paddingHorizontal: 16, paddingVertical: 16, fontSize: 16, lineHeight: 24, fontFamily: 'monospace' },
-  readerSurface: { minHeight: 300, backgroundColor: '#FFFFFF', paddingHorizontal: 17, paddingVertical: 18 },
-  readerText: { color: '#101828', fontSize: 16, lineHeight: 25 },
-  fieldSurface: { backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', padding: 13 },
-  fieldLabel: { color: '#344054', fontSize: 12, fontWeight: '800', marginBottom: 7 },
+  navigationItem: { minHeight: 36, borderRadius: 18, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, justifyContent: 'center', paddingHorizontal: 14 },
+  navigationItemActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  navigationText: { color: colors.textMuted, fontSize: 10, fontWeight: '600' },
+  navigationTextActive: { color: colors.inverseText },
+  editorSurface: { flex: 1, minHeight: 520, backgroundColor: colors.background },
+  editorHeader: { height: 50, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', alignItems: 'center' },
+  editorLabel: { flex: 1, color: colors.textMuted, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.7 },
+  applyButton: { height: 36, borderRadius: 18, backgroundColor: colors.primary, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
+  applyText: { color: colors.inverseText, fontSize: 11, fontWeight: '800' },
+  editorInput: { minHeight: 468, backgroundColor: colors.background, color: colors.text, paddingHorizontal: 16, paddingVertical: 16, fontSize: 16, lineHeight: 24, fontFamily: 'monospace' },
+  readerSurface: { minHeight: 300, backgroundColor: colors.background, paddingHorizontal: 17, paddingVertical: 18 },
+  readerText: { color: colors.text, fontSize: 16, lineHeight: 25 },
+  fieldSurface: { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border, padding: 13 },
+  fieldLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '700', marginBottom: 7 },
   fieldLine: { flexDirection: 'row', gap: 8 },
-  fieldInput: { flex: 1, minHeight: 46, borderRadius: 10, backgroundColor: '#F8F9FB', borderWidth: 1, borderColor: '#D6DBE4', color: '#101828', paddingHorizontal: 12, fontSize: 14 },
-  fieldAction: { minHeight: 46, borderRadius: 10, backgroundColor: '#202939', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
-  fieldActionText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
-  interfaceRow: { backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E7EAF0' },
+  fieldInput: { flex: 1, minHeight: 46, borderRadius: 12, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, color: colors.text, paddingHorizontal: 12, fontSize: 14 },
+  fieldAction: { minHeight: 46, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
+  fieldActionText: { color: colors.inverseText, fontSize: 11, fontWeight: '700' },
+  interfaceRow: { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   interfaceRowContent: { padding: 10, gap: 8 },
-  rowAction: { width: 142, minHeight: 72, borderRadius: 12, backgroundColor: '#F7F8FA', borderWidth: 1, borderColor: '#E0E4EA', padding: 11, justifyContent: 'center' },
-  rowActionText: { color: '#202939', fontSize: 12, lineHeight: 16, fontWeight: '800' },
-  rowActionValue: { color: '#667085', fontSize: 10, lineHeight: 14, marginTop: 5 },
-  optionRow: { minHeight: 64, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' },
+  rowAction: { width: 142, minHeight: 72, borderRadius: 12, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, padding: 11, justifyContent: 'center' },
+  rowActionText: { color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '700' },
+  rowActionValue: { color: colors.textMuted, fontSize: 10, lineHeight: 14, marginTop: 5 },
+  optionRow: { minHeight: 64, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' },
   optionCopy: { flex: 1, marginRight: 12 },
-  optionTitle: { color: '#202939', fontSize: 14, fontWeight: '700' },
-  optionDescription: { color: '#667085', fontSize: 11, lineHeight: 16, marginTop: 3 },
-  contentGroup: { backgroundColor: '#FFFFFF' },
-  contentBlock: { backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#ECEEF2' },
+  optionTitle: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  optionDescription: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  contentGroup: { backgroundColor: colors.surface },
+  contentBlock: { backgroundColor: colors.surface, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border },
   contentBlockCompact: { paddingVertical: 8 },
   contentBlockInteractive: { paddingRight: 32 },
-  contentText: { color: '#344054', fontSize: 14, lineHeight: 21 },
-  contentHeading: { color: '#101828', fontSize: 18, lineHeight: 24, fontWeight: '800' },
-  contentDescription: { color: '#667085', fontSize: 11, lineHeight: 16, marginTop: 5 },
-  listRow: { minHeight: 62, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E7EAF0', paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center' },
-  listRowSelected: { backgroundColor: '#F0EDFF' },
-  listBullet: { width: 34, height: 34, borderRadius: 9, backgroundColor: '#E9EDF3', marginRight: 11 },
+  contentText: { color: colors.textMuted, fontSize: 14, lineHeight: 21 },
+  contentHeading: { color: colors.text, fontSize: 18, lineHeight: 24, fontWeight: '700' },
+  contentDescription: { color: colors.textDim, fontSize: 11, lineHeight: 16, marginTop: 5 },
+  listRow: { minHeight: 62, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border, paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center' },
+  listRowSelected: { backgroundColor: colors.surfaceSoft },
+  listBullet: { width: 34, height: 34, borderRadius: 9, backgroundColor: colors.surfaceRaised, marginRight: 11 },
   listCopy: { flex: 1 },
-  listTitle: { color: '#202939', fontSize: 14, fontWeight: '700' },
-  listValue: { color: '#667085', fontSize: 11, marginTop: 3 },
-  listChevron: { color: '#98A2B3', fontSize: 24, marginLeft: 8 },
-  primaryAction: { minHeight: 54, marginHorizontal: 12, marginVertical: 7, borderRadius: 12, backgroundColor: '#202939', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 15 },
-  primaryActionText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
-  statusBar: { backgroundColor: '#EEF1F5', borderTopWidth: 1, borderTopColor: '#D8DDE5' },
+  listTitle: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  listValue: { color: colors.textMuted, fontSize: 11, marginTop: 3 },
+  listChevron: { color: colors.textDim, fontSize: 24, marginLeft: 8 },
+  primaryAction: { minHeight: 52, marginHorizontal: 12, marginVertical: 7, borderRadius: 13, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 15 },
+  primaryActionText: { color: colors.inverseText, fontSize: 14, fontWeight: '700' },
+  statusBar: { backgroundColor: colors.surfaceRaised, borderTopWidth: 1, borderTopColor: colors.border },
   statusContent: { minHeight: 38, paddingHorizontal: 12, alignItems: 'center', gap: 16 },
-  statusText: { color: '#5D6675', fontSize: 10, fontWeight: '600' },
+  statusText: { color: colors.textMuted, fontSize: 10, fontWeight: '500' },
   visualLoading: { minHeight: 360, margin: 12, borderRadius: radii.large, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', padding: 30 },
   visualDocument: { paddingHorizontal: 12, paddingTop: 12, gap: 12 },
-  visualCrop: { backgroundColor: '#111827', borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#CBD2DC' },
-  explorerSurface: { backgroundColor: '#F3F5F8', paddingBottom: 28 },
-  explorerNavRow: { minHeight: 54, paddingHorizontal: 10, paddingVertical: 7, flexDirection: 'row', gap: 7, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E2E6ED' },
-  explorerNavButton: { minWidth: 64, minHeight: 40, borderRadius: 11, backgroundColor: '#EEF1F5', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
-  explorerNavText: { color: '#344054', fontSize: 11, fontWeight: '800' },
-  explorerField: { minHeight: 58, marginHorizontal: 10, marginTop: 9, borderRadius: 14, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D6DBE4', padding: 6, flexDirection: 'row', alignItems: 'center' },
-  explorerFieldInput: { flex: 1, minHeight: 44, color: '#101828', fontSize: 14, paddingHorizontal: 11 },
-  explorerFieldButton: { height: 42, minWidth: 66, borderRadius: 10, backgroundColor: '#202939', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
-  explorerFieldButtonText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900' },
-  explorerCommands: { marginTop: 10, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#E1E5EB' },
-  explorerCommandsContent: { paddingHorizontal: 10, paddingVertical: 9, gap: 7 },
-  explorerCommand: { minHeight: 43, minWidth: 64, maxWidth: 116, borderRadius: 11, backgroundColor: '#F2F4F7', borderWidth: 1, borderColor: '#E0E4EA', paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
-  explorerCommandText: { color: '#344054', fontSize: 10, lineHeight: 13, fontWeight: '800', textAlign: 'center' },
-  explorerTabs: { paddingHorizontal: 10, paddingTop: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
-  explorerTab: { minHeight: 38, borderRadius: 19, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D8DDE6', paddingHorizontal: 15, alignItems: 'center', justifyContent: 'center' },
-  explorerTabSelected: { backgroundColor: '#201A3A', borderColor: '#201A3A' },
-  explorerTabText: { color: '#475467', fontSize: 11, fontWeight: '800' },
-  explorerTabTextSelected: { color: '#FFFFFF' },
-  explorerListHeader: { paddingHorizontal: 14, paddingTop: 20, paddingBottom: 9, flexDirection: 'row', alignItems: 'center' },
-  explorerListTitle: { flex: 1, color: '#101828', fontSize: 18, fontWeight: '900' },
-  explorerCount: { color: '#667085', fontSize: 10, fontWeight: '700' },
-  explorerItem: { minHeight: 74, marginHorizontal: 10, marginBottom: 8, borderRadius: 14, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DFE3E9', padding: 10, flexDirection: 'row', alignItems: 'center' },
-  explorerItemSelected: { backgroundColor: '#F0EDFF', borderColor: colors.primary },
-  explorerItemIcon: { width: 44, height: 44, borderRadius: 13, backgroundColor: '#E9EDF3', alignItems: 'center', justifyContent: 'center' },
-  explorerItemIconText: { color: '#5B6472', fontSize: 13, fontWeight: '900' },
+  visualCrop: { backgroundColor: colors.black, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
+  explorerSurface: { backgroundColor: colors.background, paddingBottom: 28 },
+  explorerHero: { minHeight: 76, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10, flexDirection: 'row', alignItems: 'center' },
+  explorerHeroCopy: { flex: 1 },
+  explorerEyebrow: { color: colors.textMuted, fontSize: 10, fontWeight: '600' },
+  explorerTitle: { color: colors.text, fontSize: 27, lineHeight: 31, fontWeight: '800', letterSpacing: -0.9, marginTop: 2 },
+  explorerMore: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  explorerMoreActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  explorerMoreText: { color: colors.textMuted, fontSize: 15, fontWeight: '700', letterSpacing: 1 },
+  explorerMoreTextActive: { color: colors.inverseText },
+  explorerNavRow: { minHeight: 50, paddingHorizontal: 12, paddingVertical: 5, flexDirection: 'row', gap: 6, backgroundColor: colors.background, alignItems: 'center' },
+  explorerNavButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  explorerNavText: { color: colors.text, fontSize: 22, lineHeight: 24, fontWeight: '400' },
+  explorerLocation: { flex: 1, height: 38, borderRadius: 19, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11 },
+  explorerLocationActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  explorerLocationGlyph: { color: colors.textMuted, fontSize: 13, marginRight: 7 },
+  explorerLocationText: { flex: 1, color: colors.textMuted, fontSize: 10, fontWeight: '600' },
+  explorerLocationTextActive: { color: colors.inverseText },
+  explorerLocationChevron: { color: colors.textDim, fontSize: 12, marginLeft: 5 },
+  explorerLocationChevronActive: { color: colors.inverseText, transform: [{ rotate: '180deg' }] },
+  explorerField: { minHeight: 52, marginHorizontal: 12, marginTop: 7, borderRadius: 14, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 5, flexDirection: 'row', alignItems: 'center' },
+  explorerSearchField: { backgroundColor: colors.surfaceRaised, borderColor: 'transparent' },
+  explorerSearchGlyph: { width: 26, color: colors.textMuted, fontSize: 20, textAlign: 'center' },
+  explorerPathGlyph: { width: 27, color: colors.textMuted, fontSize: 14, textAlign: 'center' },
+  explorerFieldInput: { flex: 1, minHeight: 40, color: colors.text, fontSize: 13, paddingHorizontal: 8 },
+  explorerFieldButton: { height: 36, minWidth: 44, borderRadius: 18, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 11 },
+  explorerFieldButtonText: { color: colors.inverseText, fontSize: 10, fontWeight: '700' },
+  explorerActionsPanel: { marginHorizontal: 12, marginTop: 10, borderRadius: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingTop: 12, overflow: 'hidden' },
+  explorerActionsTitle: { color: colors.text, fontSize: 12, fontWeight: '700', paddingHorizontal: 13 },
+  explorerCommands: { marginTop: 7 },
+  explorerCommandsContent: { paddingHorizontal: 9, paddingVertical: 9, gap: 7 },
+  explorerCommand: { width: 70, minHeight: 62, borderRadius: 13, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
+  explorerCommandGlyph: { color: colors.text, fontSize: 17, lineHeight: 20 },
+  explorerCommandText: { color: colors.textMuted, fontSize: 8, lineHeight: 11, fontWeight: '600', textAlign: 'center', marginTop: 5 },
+  explorerTabsRail: { marginTop: 10 },
+  explorerTabs: { paddingHorizontal: 12, gap: 7 },
+  explorerTab: { minHeight: 34, borderRadius: 17, backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
+  explorerTabSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  explorerTabText: { color: colors.textMuted, fontSize: 10, fontWeight: '600' },
+  explorerTabTextSelected: { color: colors.inverseText, fontWeight: '700' },
+  explorerListHeader: { paddingHorizontal: 16, paddingTop: 23, paddingBottom: 9, flexDirection: 'row', alignItems: 'center' },
+  explorerListTitle: { flex: 1, color: colors.text, fontSize: 15, fontWeight: '700' },
+  explorerCount: { color: colors.textMuted, fontSize: 9, fontWeight: '500' },
+  explorerListGroup: { marginHorizontal: 12, borderRadius: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
+  explorerItem: { minHeight: 68, paddingHorizontal: 11, paddingVertical: 8, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center' },
+  explorerItemDivider: { borderBottomWidth: 1, borderBottomColor: colors.border },
+  explorerItemSelected: { backgroundColor: colors.surfaceSoft },
+  explorerItemIcon: { width: 42, height: 42, borderRadius: 11, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  explorerFileIcon: { backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border },
+  explorerItemIconText: { color: colors.inverseText, fontSize: 10, fontWeight: '800' },
+  explorerFileIconText: { color: colors.textMuted },
   explorerItemCopy: { flex: 1, marginHorizontal: 11 },
-  explorerItemTitle: { color: '#202939', fontSize: 14, lineHeight: 18, fontWeight: '800' },
-  explorerItemDetail: { color: '#667085', fontSize: 10, lineHeight: 14, marginTop: 3 },
-  explorerOpen: { color: '#6941C6', fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
-  explorerEmpty: { minHeight: 120, marginHorizontal: 10, borderRadius: 14, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
-  explorerEmptyText: { color: '#667085', fontSize: 12 },
-  explorerHint: { color: '#7A8493', fontSize: 9, textAlign: 'center', marginTop: 8 },
-  disabled: { opacity: 0.42 },
+  explorerItemTitle: { color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '600' },
+  explorerItemDetail: { color: colors.textMuted, fontSize: 9, lineHeight: 13, marginTop: 3 },
+  explorerOpen: { color: colors.textDim, fontSize: 22, fontWeight: '400', marginRight: 2 },
+  explorerEmpty: { minHeight: 130, marginHorizontal: 12, borderRadius: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  explorerEmptyText: { color: colors.textMuted, fontSize: 11 },
+  explorerHint: { color: colors.textDim, fontSize: 8, textAlign: 'center', marginTop: 11 },
+  disabled: { opacity: 0.36 },
 });

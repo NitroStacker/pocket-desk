@@ -22,6 +22,7 @@ The phone app runs in Expo Go. Both the phone and the Windows host make outbound
 - Automatic semantic refresh after interactions and while the mobile workspace is visible
 - Top-level Win32 window enumeration and handle-pinned selection, including File Explorer windows that are not exposed through `Process.MainWindowHandle`
 - A dedicated File Explorer phone layout with real navigation, address/search fields, commands, tabs, folders, files, and status
+- Phone-native file management with thumbnails, copy, move, rename, delete, folder creation, and downloads through the iOS share sheet
 - A reusable adapter registry with tailored live layouts for Bezi, Chrome, ChatGPT/Codex, Windows Settings, Notepad and common document apps, and Windows Camera
 - Packaged Windows app discovery and real manifest icons, so Camera, Settings, Notepad, and other Microsoft Store apps launch and identify correctly
 - A touch-sized Camera interface with authenticated live preview refresh, mode, shutter, focus, brightness, settings, and camera-roll controls
@@ -141,7 +142,7 @@ npm run smoke:relay --workspace @pocketdesk/host
 - This is optimized for administration and productivity, not video playback or gaming. Expo Go does not include a custom native WebRTC stack, so this MVP uses low-latency JPEG frames.
 - The Windows lock screen and UAC secure desktop cannot be captured or controlled.
 - Secure Windows surfaces such as UAC, credential pickers, and Windows Security are removed from the remote app library because Windows intentionally blocks their accessibility and capture. GPU canvases and unusual custom UI use visual-region reflow; Desktop mode remains available for precision input.
-- File search opens a matching local file in its normal Windows application; file transfer is not implemented. The current host captures the whole Windows virtual desktop. Monitor selection, audio, and clipboard sync are not implemented yet.
+- PC-to-phone downloads are limited to 250 MB per file, and phone-to-PC uploads are not implemented yet. The current host captures the whole Windows virtual desktop. Monitor selection, audio, and clipboard sync are not implemented yet.
 - Cloudflare terminates TLS and relays the session; this MVP is not end-to-end encrypted above TLS. Read [docs/SECURITY.md](docs/SECURITY.md) before treating it as unattended or production-ready.
 
 ## Natural next milestone

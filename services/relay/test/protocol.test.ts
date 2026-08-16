@@ -26,6 +26,9 @@ describe("relay message allowlist", () => {
     expect(isAllowedRelayMessage("viewer", '{"type":"request-icons"}')).toBe(true);
     expect(isAllowedRelayMessage("viewer", '{"type":"request-app-visual"}')).toBe(true);
     expect(isAllowedRelayMessage("viewer", '{"type":"request-camera-status"}')).toBe(true);
+    expect(isAllowedRelayMessage("viewer", '{"type":"request-files"}')).toBe(true);
+    expect(isAllowedRelayMessage("viewer", '{"type":"file-operation"}')).toBe(true);
+    expect(isAllowedRelayMessage("viewer", '{"type":"request-file-download"}')).toBe(true);
     expect(isAllowedRelayMessage("viewer", '{"type":"camera-control"}')).toBe(true);
     expect(isAllowedRelayMessage("viewer", '{"type":"desktop-meta"}')).toBe(
       false,
@@ -38,6 +41,9 @@ describe("relay message allowlist", () => {
     expect(isAllowedRelayMessage("host", '{"type":"app-icon"}')).toBe(true);
     expect(isAllowedRelayMessage("host", '{"type":"app-visual"}')).toBe(true);
     expect(isAllowedRelayMessage("host", '{"type":"camera-status"}')).toBe(true);
+    expect(isAllowedRelayMessage("host", '{"type":"files-snapshot"}')).toBe(true);
+    expect(isAllowedRelayMessage("host", '{"type":"file-thumbnail"}')).toBe(true);
+    expect(isAllowedRelayMessage("host", '{"type":"file-download-chunk"}')).toBe(true);
     expect(isAllowedRelayMessage("host", '{"type":"input"}')).toBe(false);
   });
 

@@ -33,58 +33,66 @@ public static class PocketDeskIconNative {
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DestroyIcon(IntPtr handle);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint PrivateExtractIcons(
+        string fileName,
+        int iconIndex,
+        int iconWidth,
+        int iconHeight,
+        [Out] IntPtr[] iconHandles,
+        [Out] uint[] iconIds,
+        uint iconCount,
+        uint flags
+    );
 }
 '@
 
-function Read-IconPng([string]$Path) {
-    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $null }
-    $info = New-Object PocketDeskIconNative+SHFILEINFO
-    $flags = [uint32](0x00000100 -bor 0x000000000)
-    $result = [PocketDeskIconNative]::SHGetFileInfo(
-        $Path,
-        0,
-        [ref]$info,
-        [uint32][Runtime.InteropServices.Marshal]::SizeOf($info),
-        $flags
-    )
-    if ($result -eq [IntPtr]::Zero -or $info.hIcon -eq [IntPtr]::Zero) { return $null }
+$outputSize = 128
+$sourceIconSize = 256
+$shortcutReader = New-Object -ComObject WScript.Shell
 
-    try {
-        $sourceIcon = [System.Drawing.Icon]::FromHandle($info.hIcon)
-        $sourceBitmap = $sourceIcon.ToBitmap()
-        try {
-            $bitmap = New-Object System.Drawing.Bitmap 64, 64, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-            try {
-                $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-                try {
-                    $graphics.Clear([System.Drawing.Color]::Transparent)
-                    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-                    $graphics.DrawImage($sourceBitmap, 0, 0, 64, 64)
-                }
-                finally { $graphics.Dispose() }
-
-                $stream = New-Object System.IO.MemoryStream
-                try {
-                    $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
-                    return 'data:image/png;base64,' + [Convert]::ToBase64String($stream.ToArray())
-                }
-                finally { $stream.Dispose() }
-            }
-            finally { $bitmap.Dispose() }
-        }
-        finally { $sourceBitmap.Dispose() }
+function Resolve-IconReference([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    $expandedPath = [Environment]::ExpandEnvironmentVariables($Path.Trim().Trim('"'))
+    if ([IO.Path]::GetExtension($expandedPath) -ne '.lnk') {
+        if (-not (Test-Path -LiteralPath $expandedPath -PathType Leaf)) { return $null }
+        return [PSCustomObject]@{ Path = $expandedPath; Index = 0 }
     }
-    finally { [void][PocketDeskIconNative]::DestroyIcon($info.hIcon) }
+
+    if (-not (Test-Path -LiteralPath $expandedPath -PathType Leaf)) { return $null }
+    try {
+        $shortcut = $shortcutReader.CreateShortcut($expandedPath)
+        $iconLocation = [string]$shortcut.IconLocation
+        if ($iconLocation -match '^(?<path>.*),\s*(?<index>-?\d+)\s*$') {
+            $iconPath = [Environment]::ExpandEnvironmentVariables($Matches.path.Trim().Trim('"'))
+            if (-not [string]::IsNullOrWhiteSpace($iconPath) -and
+                (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
+                return [PSCustomObject]@{ Path = $iconPath; Index = [int]$Matches.index }
+            }
+        }
+
+        $targetPath = [Environment]::ExpandEnvironmentVariables(([string]$shortcut.TargetPath).Trim().Trim('"'))
+        if (Test-Path -LiteralPath $targetPath -PathType Leaf) {
+            return [PSCustomObject]@{ Path = $targetPath; Index = 0 }
+        }
+    }
+    catch { }
+    return $null
 }
 
 function Convert-BitmapPng($SourceBitmap) {
-    $bitmap = New-Object System.Drawing.Bitmap 64, 64, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $bitmap = New-Object System.Drawing.Bitmap $outputSize, $outputSize, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     try {
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         try {
             $graphics.Clear([System.Drawing.Color]::Transparent)
+            $graphics.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceOver
+            $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
             $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-            $graphics.DrawImage($SourceBitmap, 0, 0, 64, 64)
+            $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+            $graphics.DrawImage($SourceBitmap, 0, 0, $outputSize, $outputSize)
         }
         finally { $graphics.Dispose() }
         $stream = New-Object System.IO.MemoryStream
@@ -95,6 +103,51 @@ function Convert-BitmapPng($SourceBitmap) {
         finally { $stream.Dispose() }
     }
     finally { $bitmap.Dispose() }
+}
+
+function Convert-IconHandlePng([IntPtr]$IconHandle) {
+    if ($IconHandle -eq [IntPtr]::Zero) { return $null }
+    try {
+        $sourceIcon = [System.Drawing.Icon]::FromHandle($IconHandle)
+        $sourceBitmap = $sourceIcon.ToBitmap()
+        try { return Convert-BitmapPng $sourceBitmap }
+        finally { $sourceBitmap.Dispose() }
+    }
+    finally { [void][PocketDeskIconNative]::DestroyIcon($IconHandle) }
+}
+
+function Read-IconPng([string]$Path) {
+    $reference = Resolve-IconReference $Path
+    if ($null -eq $reference) { return $null }
+
+    $handles = New-Object IntPtr[] 1
+    $iconIds = New-Object uint32[] 1
+    $count = [PocketDeskIconNative]::PrivateExtractIcons(
+        [string]$reference.Path,
+        [int]$reference.Index,
+        $sourceIconSize,
+        $sourceIconSize,
+        $handles,
+        $iconIds,
+        1,
+        0
+    )
+    if ($count -gt 0 -and $handles[0] -ne [IntPtr]::Zero) {
+        return Convert-IconHandlePng $handles[0]
+    }
+
+    $info = New-Object PocketDeskIconNative+SHFILEINFO
+    $flags = [uint32](0x00000100 -bor 0x000000000)
+    $result = [PocketDeskIconNative]::SHGetFileInfo(
+        [string]$reference.Path,
+        0,
+        [ref]$info,
+        [uint32][Runtime.InteropServices.Marshal]::SizeOf($info),
+        $flags
+    )
+    if ($result -eq [IntPtr]::Zero -or $info.hIcon -eq [IntPtr]::Zero) { return $null }
+
+    return Convert-IconHandlePng $info.hIcon
 }
 
 $packageCache = @{}
@@ -133,7 +186,25 @@ function Read-PackagedIconPng([string]$AppUserModelId) {
             Sort-Object @{ Expression = { if ($_.Name -match 'targetsize-64.*unplated') { 0 } elseif ($_.Name -match 'targetsize') { 1 } elseif ($_.Name -match 'scale-200') { 2 } else { 3 } } }, Name |
             ForEach-Object { $candidates.Add($_.FullName) }
     }
-    $iconPath = $candidates | Select-Object -First 1
+    $rankedCandidates = foreach ($candidate in @($candidates | Select-Object -Unique)) {
+        try {
+            $candidateImage = [System.Drawing.Image]::FromFile($candidate)
+            try {
+                $dimension = [Math]::Max($candidateImage.Width, $candidateImage.Height)
+                $unplated = [IO.Path]::GetFileName($candidate) -match '(?i)unplated'
+                $tier = if ($unplated -and $dimension -ge $outputSize) { 3 }
+                    elseif ($dimension -ge $outputSize) { 2 }
+                    elseif ($unplated) { 1 }
+                    else { 0 }
+                [PSCustomObject]@{ Path = $candidate; Tier = $tier; Dimension = $dimension }
+            }
+            finally { $candidateImage.Dispose() }
+        }
+        catch { }
+    }
+    $iconPath = $rankedCandidates |
+        Sort-Object @{ Expression = 'Tier'; Descending = $true }, @{ Expression = 'Dimension'; Descending = $true }, Path |
+        Select-Object -ExpandProperty Path -First 1
     if ([string]::IsNullOrWhiteSpace($iconPath)) { return $null }
     $source = [System.Drawing.Image]::FromFile($iconPath)
     try { return Convert-BitmapPng $source }

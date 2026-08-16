@@ -46,12 +46,12 @@ export function ConnectionScreen({ status, error, onConnect }: Props) {
           <View style={styles.hero}>
             <View style={styles.eyebrow}>
               <View style={styles.liveDot} />
-              <Text style={styles.eyebrowText}>YOUR PC, REFITTED FOR MOBILE</Text>
+              <Text style={styles.eyebrowText}>SECURE REMOTE WORKSPACE</Text>
             </View>
-            <Text style={styles.title}>Your desktop.{`\n`}Now thumb-friendly.</Text>
+            <Text style={styles.title}>Your PC,{`\n`}within reach.</Text>
             <Text style={styles.subtitle}>
-              Direct control when you need every pixel. Smart controls when you want
-              apps, menus, and actions shaped for your phone.
+              Open Windows apps, browse files, and take precise control from a calm,
+              phone-native workspace.
             </Text>
           </View>
 
@@ -143,20 +143,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.primary,
-    transform: [{ rotate: '-8deg' }],
   },
-  logoGlyph: { color: colors.text, fontWeight: '900', fontSize: 19 },
+  logoGlyph: { color: colors.inverseText, fontWeight: '900', fontSize: 18 },
   brand: { color: colors.text, fontSize: 18, fontWeight: '800', letterSpacing: -0.4 },
-  hero: { marginTop: 44, marginBottom: 30 },
+  hero: { marginTop: 40, marginBottom: 28 },
   eyebrow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent },
-  eyebrowText: { color: colors.accent, fontSize: 11, fontWeight: '800', letterSpacing: 1.4 },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.text },
+  eyebrowText: { color: colors.textMuted, fontSize: 9, fontWeight: '700', letterSpacing: 1.3 },
   title: {
     color: colors.text,
-    fontSize: 42,
-    lineHeight: 46,
-    fontWeight: '900',
-    letterSpacing: -1.8,
+    fontSize: 39,
+    lineHeight: 43,
+    fontWeight: '800',
+    letterSpacing: -1.5,
   },
   subtitle: { color: colors.textMuted, fontSize: 16, lineHeight: 24, marginTop: 16 },
   formCard: {
@@ -166,7 +165,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.large,
     padding: 18,
   },
-  step: { color: colors.primaryBright, fontSize: 11, fontWeight: '900', letterSpacing: 1.2 },
+  step: { color: colors.textMuted, fontSize: 9, fontWeight: '700', letterSpacing: 1.1 },
   label: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 7, marginBottom: 9 },
   input: {
     minHeight: 54,
@@ -192,10 +191,10 @@ const styles = StyleSheet.create({
   },
   buttonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
   buttonDisabled: { opacity: 0.55 },
-  connectText: { color: colors.text, fontSize: 16, fontWeight: '800' },
-  arrow: { color: colors.text, fontSize: 24, fontWeight: '400' },
+  connectText: { color: colors.inverseText, fontSize: 15, fontWeight: '800' },
+  arrow: { color: colors.inverseText, fontSize: 23, fontWeight: '400' },
   securityRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, marginTop: 14 },
-  lock: { color: colors.accent, fontSize: 10, marginTop: 3 },
+  lock: { color: colors.textMuted, fontSize: 9, marginTop: 3 },
   securityText: { color: colors.textMuted, flex: 1, fontSize: 12, lineHeight: 17 },
   featureRow: { flexDirection: 'row', gap: 10, marginTop: 18 },
   feature: {
@@ -205,7 +204,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.medium,
     padding: 12,
   },
-  featureGlyph: { color: colors.primaryBright, fontSize: 21, marginBottom: 9 },
+  featureGlyph: { color: colors.text, fontSize: 20, marginBottom: 9 },
   featureTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
   featureBody: { color: colors.textMuted, fontSize: 11, lineHeight: 15, marginTop: 4 },
 });
