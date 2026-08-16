@@ -29,8 +29,11 @@ The phone app runs in Expo Go. Both the phone and the Windows host make outbound
 - Direct standard-UVC control for the connected EMEET PIXY motor: precise/large pan and tilt moves, zoom, center/home, live position readouts, and three persistent presets
 - Desktop-frame transport is suspended while the semantic workspace is active
 - Smooth, Balanced, and Sharp stream profiles
-- One-time 256-bit session credentials with a 1–24 hour expiry
-- Separate host and viewer keys, stored as SHA-256 hashes in a per-session Durable Object
+- PC-managed trusted devices with 15-minute, one-use add codes
+- A separate 256-bit credential for every phone, stored in the device Keychain/Keystore and revocable without affecting other phones
+- Persistent host enrollment protected for the current Windows user, with automatic relay reconnection after restart
+- A restricted LocalSystem secure host that starts at boot and hands off between the Windows sign-in/lock desktop and the normal signed-in host
+- Remote password entry from a masked iOS-style composer; the secure path supports only screen, pointer, keyboard, quality, and connection messages
 - Frame backpressure: stale frames are dropped instead of building latency
 - Hibernating Cloudflare WebSockets for low idle relay cost
 
@@ -38,8 +41,9 @@ The phone app runs in Expo Go. Both the phone and the Windows host make outbound
 
 ```mermaid
 flowchart LR
-    H["Windows host<br/>capture + UI Automation + input"] -->|"outbound WSS<br/>host key"| D["Cloudflare Durable Object<br/>one per session"]
-    D -->|"outbound WSS<br/>viewer key"| M["Expo Go phone app<br/>Mobile workspace + Desktop fallback + Input"]
+    H["Signed-in Windows host<br/>apps + files + desktop"] -->|"outbound WSS<br/>host key"| D["Cloudflare Durable Object<br/>one per session"]
+    S["Boot service + secure worker<br/>sign-in screen only"] -->|"outbound WSS<br/>same host key, restricted role"| D
+    D -->|"outbound WSS<br/>per-device key"| M["Expo Go phone app<br/>Mobile workspace + Desktop fallback + Input"]
     H -. "JPEG frames + semantic metadata" .-> M
     M -. "allowlisted input commands" .-> H
 ```
@@ -93,13 +97,43 @@ $env:POCKETDESK_ADMIN_TOKEN='<the same strong admin token>'
 npm run host
 ```
 
-The host prints the relay URL, a one-time pairing code, and its expiry. Leave this terminal running while connected. Optional flags are available:
+On its first run, the host prints the relay URL and a one-time add-device code. The code expires after 15 minutes; after a phone uses it, that phone remains trusted until it is removed on the PC. Optional flags are available:
 
 ```powershell
-npm run host -- --relay https://example.workers.dev --admin '<token>' --expires 8 --profile balanced
+npm run host -- --relay https://example.workers.dev --admin '<token>' --profile balanced
 ```
 
-Profiles are `smooth`, `balanced`, or `sharp` and can also be changed from the phone.
+Profiles are `smooth`, `balanced`, or `sharp` and can also be changed from the phone. A short-lived session is still available with `--temporary true --expires 8`. Use `--reset-pairing true` only when you need to replace the host enrollment.
+
+### Trusted devices on the PC
+
+List, add, and remove phones from Windows. Each add action creates a named, single-use code that expires after 15 minutes:
+
+```powershell
+.\scripts\manage-devices.ps1 -RelayUrl 'https://pocketdesk-relay.<your-subdomain>.workers.dev'
+.\scripts\manage-devices.ps1 -RelayUrl 'https://pocketdesk-relay.<your-subdomain>.workers.dev' -Add -Name 'My iPhone'
+.\scripts\manage-devices.ps1 -RelayUrl 'https://pocketdesk-relay.<your-subdomain>.workers.dev' -Remove -DeviceId '<id from the list>'
+```
+
+Removing a device revokes its credential and closes its active connection without changing any other trusted phone.
+
+### Start after a Windows restart and control Windows sign-in
+
+First redeploy the updated relay. Then, after the regular host has created its persistent enrollment, open PowerShell as Administrator and install the native secure host:
+
+```powershell
+.\scripts\install-secure-host.ps1 -Profile balanced
+```
+
+The installer publishes a self-contained x64 host, protects its minimal relay enrollment with machine-scoped Windows DPAPI, restricts the credential file to SYSTEM and Administrators, installs an automatic LocalSystem service, and also configures the regular host to start after this user signs in. The service connects before login and activates only when Windows is signed out or locked. It yields automatically to the regular host after a successful sign-in.
+
+Remove the service and its machine credential with:
+
+```powershell
+.\scripts\install-secure-host.ps1 -Uninstall
+```
+
+For current-user autostart without sign-in control, use `install-host-autostart.ps1` instead. The native service is currently an unsigned development build; production distribution still requires Windows code signing and a hardened updater.
 
 ## 4. Run the Expo Go app
 
@@ -111,21 +145,22 @@ $env:EXPO_PUBLIC_RELAY_URL='https://pocketdesk-relay.<your-subdomain>.workers.de
 npx expo start --tunnel
 ```
 
-Scan Expo's QR code with Expo Go, paste the pairing code shown by the Windows host, and connect. The Expo tunnel serves the development JavaScript bundle; the actual remote-desktop traffic travels through your Cloudflare relay.
+Scan Expo's QR code with Expo Go, paste an add-device code created on the Windows PC, and pair. PocketDesk stores the phone's unique trusted-device key in the iOS Keychain or Android Keystore and reconnects automatically whenever the PC is online. The Expo tunnel serves the development JavaScript bundle; the actual remote-desktop traffic travels through your Cloudflare relay.
 
 ## Phone controls
 
 - **Home** — the default phone-sized Windows Start surface. Search apps and files, launch pinned taskbar apps, and jump into open windows.
 - **Apps toolbar** — opens a full library of current windows, taskbar pins, and Start menu shortcuts from anywhere in the app.
 - **Current** — the selected application's interface itself, reconstructed into a narrow responsive layout. Structured apps receive native tabs, menus, toolbars, editors, fields, lists, and status areas in their original order. Opaque apps receive touchable visual regions cropped from that real window.
-- **Desktop** — a full-screen pixel view for canvas-based or otherwise opaque interfaces. Choose Fill or Fit and interact directly by touch.
-- **Input** — precision trackpad, mouse buttons, scrolling, text composer, shortcut keys, and stream quality.
+- **Desktop** — a full-screen pixel view for canvas-based or otherwise opaque interfaces. One finger controls the PC, two fingers pan the viewport, and a pinch zooms up to 400%. Copy, Paste, and a visible iOS-style text composer stay immediately below the desktop. At Windows sign-in, PocketDesk locks itself to this view and replaces clipboard controls with Ctrl Alt Del, Tab, a masked password field, and Sign in. Windows honors simulated Ctrl Alt Del only when its local software-SAS policy permits it.
+- **Input** — precision trackpad, mouse buttons, scrolling, a multiline visible text composer, Copy/Paste/Select All shortcuts, keyboard keys, and stream quality.
 
 ## Verification commands
 
 ```powershell
 npm run typecheck
 npm test
+npm run secure-host:build
 npm run relay:types
 npm exec --workspace @pocketdesk/relay -- wrangler deploy --dry-run
 npm run smoke:capture --workspace @pocketdesk/host
@@ -140,11 +175,10 @@ npm run smoke:relay --workspace @pocketdesk/host
 ## Important MVP limits
 
 - This is optimized for administration and productivity, not video playback or gaming. Expo Go does not include a custom native WebRTC stack, so this MVP uses low-latency JPEG frames.
-- The Windows lock screen and UAC secure desktop cannot be captured or controlled.
-- Secure Windows surfaces such as UAC, credential pickers, and Windows Security are removed from the remote app library because Windows intentionally blocks their accessibility and capture. GPU canvases and unusual custom UI use visual-region reflow; Desktop mode remains available for precision input.
+- The installed secure host supports Windows sign-in and lock screens. It intentionally refuses an unlocked user's UAC consent desktop, credential pickers, and Windows Security surfaces; these also remain excluded from semantic scans and the app library.
 - PC-to-phone downloads are limited to 250 MB per file, and phone-to-PC uploads are not implemented yet. The current host captures the whole Windows virtual desktop. Monitor selection, audio, and clipboard sync are not implemented yet.
 - Cloudflare terminates TLS and relays the session; this MVP is not end-to-end encrypted above TLS. Read [docs/SECURITY.md](docs/SECURITY.md) before treating it as unattended or production-ready.
 
 ## Natural next milestone
 
-Move the full-screen visual fallback to a signed development build with WebRTC hardware encoding, add device approval and end-to-end session encryption, and run the Windows host as a signed tray application. That gets smooth 30–60 FPS visual fallback without giving up the primary semantic mobile workspace.
+Code-sign the boot service and installer, move the visual fallback to WebRTC hardware encoding, add end-to-end session encryption, and wrap device management in a signed Windows tray application. That gets a production-grade unattended host, smooth 30–60 FPS visual fallback, and graphical trusted-device management without giving up the primary semantic mobile workspace.

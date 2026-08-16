@@ -64,6 +64,8 @@ export function ControlPanel({ meta, onInput, onQuality }: Props) {
       style={styles.scroll}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      automaticallyAdjustKeyboardInsets
     >
       <View style={styles.sectionHeader}>
         <View>
@@ -102,7 +104,12 @@ export function ControlPanel({ meta, onInput, onQuality }: Props) {
         </Pressable>
       </View>
 
-      <Text style={styles.overline}>TYPE ON YOUR PC</Text>
+      <Text style={styles.overline}>KEYBOARD</Text>
+      <View style={styles.primaryShortcuts}>
+        <Shortcut label="Copy" onPress={() => onInput({ kind: 'shortcut', keys: ['Ctrl', 'C'] })} grow />
+        <Shortcut label="Paste" onPress={() => onInput({ kind: 'shortcut', keys: ['Ctrl', 'V'] })} grow />
+        <Shortcut label="Select all" onPress={() => onInput({ kind: 'shortcut', keys: ['Ctrl', 'A'] })} grow />
+      </View>
       <View style={styles.composerRow}>
         <TextInput
           value={text}
@@ -111,7 +118,14 @@ export function ControlPanel({ meta, onInput, onQuality }: Props) {
           placeholder="Write or paste text…"
           placeholderTextColor={colors.textMuted}
           style={styles.composer}
-          returnKeyType="send"
+          multiline
+          autoCapitalize="sentences"
+          autoCorrect
+          spellCheck
+          keyboardAppearance="dark"
+          maxLength={2000}
+          textAlignVertical="top"
+          accessibilityLabel="Text to type on the remote PC"
         />
         <Pressable style={styles.sendButton} onPress={submitText}>
           <Text style={styles.sendText}>Send</Text>
@@ -163,9 +177,9 @@ function ActionButton({
   );
 }
 
-function Shortcut({ label, onPress }: { label: string; onPress: () => void }) {
+function Shortcut({ label, onPress, grow = false }: { label: string; onPress: () => void; grow?: boolean }) {
   return (
-    <Pressable style={styles.shortcut} onPress={onPress}>
+    <Pressable style={[styles.shortcut, grow && styles.shortcutGrow]} onPress={onPress}>
       <Text style={styles.shortcutText}>{label}</Text>
     </Pressable>
   );
@@ -213,21 +227,25 @@ const styles = StyleSheet.create({
   buttonGlyph: { color: colors.textMuted, fontSize: 18 },
   buttonText: { color: colors.text, fontSize: 11, fontWeight: '700' },
   overline: { color: colors.textMuted, fontSize: 10, fontWeight: '900', letterSpacing: 1.2, marginTop: 22, marginBottom: 9 },
+  primaryShortcuts: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   composerRow: { flexDirection: 'row', gap: 8 },
   composer: {
     flex: 1,
-    minHeight: 52,
+    minHeight: 92,
     borderRadius: radii.medium,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     color: colors.text,
     paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
   },
   sendButton: { minWidth: 72, borderRadius: radii.medium, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   sendText: { color: colors.inverseText, fontSize: 13, fontWeight: '800' },
   shortcutRow: { gap: 8, paddingRight: 16 },
   shortcut: { paddingHorizontal: 14, paddingVertical: 11, backgroundColor: colors.surfaceRaised, borderRadius: radii.small },
+  shortcutGrow: { flex: 1, alignItems: 'center' },
   shortcutText: { color: colors.text, fontSize: 12, fontWeight: '700' },
   profileRow: { flexDirection: 'row', backgroundColor: colors.surface, borderRadius: radii.medium, padding: 4 },
   profile: { flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center' },

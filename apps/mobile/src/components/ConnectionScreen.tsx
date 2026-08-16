@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -16,15 +17,17 @@ import type { ConnectionStatus } from '../types';
 interface Props {
   status: ConnectionStatus;
   error: string | null;
+  restoring: boolean;
   onConnect: (relayUrl: string, pairingCode: string) => void;
 }
 
 const DEFAULT_RELAY = process.env.EXPO_PUBLIC_RELAY_URL ?? '';
 
-export function ConnectionScreen({ status, error, onConnect }: Props) {
+export function ConnectionScreen({ status, error, restoring, onConnect }: Props) {
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY);
   const [pairingCode, setPairingCode] = useState('');
-  const busy = status === 'connecting';
+  const [showRelay, setShowRelay] = useState(!DEFAULT_RELAY);
+  const busy = status === 'connecting' || restoring;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -32,88 +35,77 @@ export function ConnectionScreen({ status, error, onConnect }: Props) {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}
       >
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.brandRow}>
-            <View style={styles.logo}>
-              <Text style={styles.logoGlyph}>P</Text>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <View style={styles.card}>
+            <View style={styles.brandRow}>
+              <View style={styles.logo}><Text style={styles.logoGlyph}>P</Text></View>
+              <Text style={styles.brand}>PocketDesk</Text>
             </View>
-            <Text style={styles.brand}>PocketDesk</Text>
-          </View>
 
-          <View style={styles.hero}>
-            <View style={styles.eyebrow}>
-              <View style={styles.liveDot} />
-              <Text style={styles.eyebrowText}>SECURE REMOTE WORKSPACE</Text>
-            </View>
-            <Text style={styles.title}>Your PC,{`\n`}within reach.</Text>
-            <Text style={styles.subtitle}>
-              Open Windows apps, browse files, and take precise control from a calm,
-              phone-native workspace.
-            </Text>
-          </View>
+            {restoring ? (
+              <View style={styles.restoring}>
+                <ActivityIndicator color={colors.primaryBright} />
+                <Text style={styles.restoringText}>Reconnecting to your PC…</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.title}>Pair your PC</Text>
+                <Text style={styles.subtitle}>Paste the one-time code shown by PocketDesk Host.</Text>
 
-          <View style={styles.formCard}>
-            <Text style={styles.step}>1  RELAY</Text>
-            <Text style={styles.label}>Cloudflare relay URL</Text>
-            <TextInput
-              value={relayUrl}
-              onChangeText={setRelayUrl}
-              placeholder="https://pocketdesk-relay…workers.dev"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              style={styles.input}
-              accessibilityLabel="Cloudflare relay URL"
-            />
+                <TextInput
+                  value={pairingCode}
+                  onChangeText={setPairingCode}
+                  placeholder="Pairing code"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="ascii-capable"
+                  style={styles.input}
+                  accessibilityLabel="One-time pairing code"
+                />
 
-            <View style={styles.divider} />
+                {showRelay ? (
+                  <TextInput
+                    value={relayUrl}
+                    onChangeText={setRelayUrl}
+                    placeholder="https://relay.example.workers.dev"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    style={[styles.input, styles.relayInput]}
+                    accessibilityLabel="Cloudflare relay URL"
+                  />
+                ) : null}
 
-            <Text style={styles.step}>2  PAIR</Text>
-            <Text style={styles.label}>One-time pairing code</Text>
-            <TextInput
-              value={pairingCode}
-              onChangeText={setPairingCode}
-              placeholder="Paste the code shown on your PC"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-              style={styles.input}
-              accessibilityLabel="Pairing code"
-            />
+                {error ? <Text style={styles.error}>{error}</Text> : null}
 
-            {error ? <Text style={styles.error}>{error}</Text> : null}
+                <Pressable
+                  disabled={busy || !pairingCode.trim()}
+                  onPress={() => onConnect(relayUrl, pairingCode)}
+                  style={({ pressed }) => [
+                    styles.connectButton,
+                    pressed && styles.buttonPressed,
+                    (busy || !pairingCode.trim()) && styles.buttonDisabled,
+                  ]}
+                  accessibilityRole="button"
+                >
+                  {busy ? <ActivityIndicator color={colors.inverseText} /> : null}
+                  <Text style={styles.connectText}>{busy ? 'Pairing…' : 'Pair this phone'}</Text>
+                </Pressable>
 
-            <Pressable
-              disabled={busy}
-              onPress={() => onConnect(relayUrl, pairingCode)}
-              style={({ pressed }) => [
-                styles.connectButton,
-                pressed && styles.buttonPressed,
-                busy && styles.buttonDisabled,
-              ]}
-              accessibilityRole="button"
-            >
-              <Text style={styles.connectText}>{busy ? 'Connecting…' : 'Connect securely'}</Text>
-              <Text style={styles.arrow}>→</Text>
-            </Pressable>
+                <View style={styles.trustRow}>
+                  <View style={styles.check}><Text style={styles.checkText}>✓</Text></View>
+                  <Text style={styles.trustText}>This phone stays paired until you forget or reset it.</Text>
+                </View>
 
-            <View style={styles.securityRow}>
-              <Text style={styles.lock}>◆</Text>
-              <Text style={styles.securityText}>
-                Session keys expire. Your PC is never opened directly to the internet.
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.featureRow}>
-            <Feature glyph="◎" title="Direct" body="Pixel-perfect touch" />
-            <Feature glyph="⌁" title="Trackpad" body="Precise cursor control" />
-            <Feature glyph="✦" title="Smart" body="Mobile-sized actions" />
+                {DEFAULT_RELAY ? (
+                  <Pressable onPress={() => setShowRelay((current) => !current)} style={styles.relayToggle}>
+                    <Text style={styles.relayToggleText}>{showRelay ? 'Hide relay settings' : 'Relay settings'}</Text>
+                  </Pressable>
+                ) : null}
+              </>
+            )}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -121,90 +113,30 @@ export function ConnectionScreen({ status, error, onConnect }: Props) {
   );
 }
 
-function Feature({ glyph, title, body }: { glyph: string; title: string; body: string }) {
-  return (
-    <View style={styles.feature}>
-      <Text style={styles.featureGlyph}>{glyph}</Text>
-      <Text style={styles.featureTitle}>{title}</Text>
-      <Text style={styles.featureBody}>{body}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   safeArea: { flex: 1, backgroundColor: colors.background },
-  content: { paddingHorizontal: 20, paddingBottom: 36 },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 },
-  logo: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-  },
+  content: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 24 },
+  card: { width: '100%', maxWidth: 480, alignSelf: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.large, padding: 22 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  logo: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
   logoGlyph: { color: colors.inverseText, fontWeight: '900', fontSize: 18 },
   brand: { color: colors.text, fontSize: 18, fontWeight: '800', letterSpacing: -0.4 },
-  hero: { marginTop: 40, marginBottom: 28 },
-  eyebrow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.text },
-  eyebrowText: { color: colors.textMuted, fontSize: 9, fontWeight: '700', letterSpacing: 1.3 },
-  title: {
-    color: colors.text,
-    fontSize: 39,
-    lineHeight: 43,
-    fontWeight: '800',
-    letterSpacing: -1.5,
-  },
-  subtitle: { color: colors.textMuted, fontSize: 16, lineHeight: 24, marginTop: 16 },
-  formCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.large,
-    padding: 18,
-  },
-  step: { color: colors.textMuted, fontSize: 9, fontWeight: '700', letterSpacing: 1.1 },
-  label: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 7, marginBottom: 9 },
-  input: {
-    minHeight: 54,
-    borderRadius: radii.medium,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    color: colors.text,
-    paddingHorizontal: 14,
-    fontSize: 15,
-  },
-  divider: { height: 1, backgroundColor: colors.border, marginVertical: 18 },
+  title: { color: colors.text, fontSize: 30, fontWeight: '800', letterSpacing: -1, marginTop: 34 },
+  subtitle: { color: colors.textMuted, fontSize: 14, lineHeight: 20, marginTop: 8, marginBottom: 18 },
+  input: { minHeight: 56, borderRadius: radii.medium, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, color: colors.text, paddingHorizontal: 14, fontSize: 15 },
+  relayInput: { marginTop: 10, fontSize: 13 },
   error: { color: colors.danger, fontSize: 13, lineHeight: 18, marginTop: 12 },
-  connectButton: {
-    height: 58,
-    borderRadius: radii.medium,
-    backgroundColor: colors.primary,
-    marginTop: 16,
-    paddingHorizontal: 18,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
+  connectButton: { height: 56, borderRadius: radii.medium, backgroundColor: colors.primary, marginTop: 14, flexDirection: 'row', gap: 9, justifyContent: 'center', alignItems: 'center' },
   buttonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
-  buttonDisabled: { opacity: 0.55 },
+  buttonDisabled: { opacity: 0.5 },
   connectText: { color: colors.inverseText, fontSize: 15, fontWeight: '800' },
-  arrow: { color: colors.inverseText, fontSize: 23, fontWeight: '400' },
-  securityRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, marginTop: 14 },
-  lock: { color: colors.textMuted, fontSize: 9, marginTop: 3 },
-  securityText: { color: colors.textMuted, flex: 1, fontSize: 12, lineHeight: 17 },
-  featureRow: { flexDirection: 'row', gap: 10, marginTop: 18 },
-  feature: {
-    flex: 1,
-    minHeight: 112,
-    backgroundColor: colors.surface,
-    borderRadius: radii.medium,
-    padding: 12,
-  },
-  featureGlyph: { color: colors.text, fontSize: 20, marginBottom: 9 },
-  featureTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
-  featureBody: { color: colors.textMuted, fontSize: 11, lineHeight: 15, marginTop: 4 },
+  trustRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 15 },
+  check: { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.surfaceRaised, alignItems: 'center', justifyContent: 'center' },
+  checkText: { color: colors.success, fontSize: 11, fontWeight: '900' },
+  trustText: { color: colors.textMuted, flex: 1, fontSize: 11, lineHeight: 16 },
+  relayToggle: { alignSelf: 'center', paddingHorizontal: 16, paddingVertical: 12, marginTop: 8 },
+  relayToggleText: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
+  restoring: { minHeight: 210, alignItems: 'center', justifyContent: 'center', gap: 14 },
+  restoringText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
 });

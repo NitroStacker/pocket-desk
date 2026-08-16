@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, radii } from '../theme';
 import type { RemoteSessionApi } from '../types';
@@ -7,6 +7,7 @@ import { groupOpenWindows, resolveWindowIconKey, windowDisplayName } from '../li
 import { AppLibraryModal } from './AppLibraryModal';
 import { adapterNeedsVisual, getAppAdapterKind } from './AppAdapters';
 import { ControlPanel } from './ControlPanel';
+import { DesktopInputBar } from './DesktopInputBar';
 import { HomeScreen } from './HomeScreen';
 import { LiveCanvas } from './LiveCanvas';
 import { MotionPressable } from './MotionPressable';
@@ -30,7 +31,7 @@ export function RemoteScreen({ session }: Props) {
   const [mode, setMode] = useState<Mode>('home');
   const [appsVisible, setAppsVisible] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
-  const [desktopFit, setDesktopFit] = useState<'contain' | 'cover'>('cover');
+  const [desktopFit, setDesktopFit] = useState<'contain' | 'cover'>('contain');
   const transition = useRef(new Animated.Value(1)).current;
   const [pendingSelection, setPendingSelection] = useState<{
     afterCapturedAt: number;
@@ -64,6 +65,13 @@ export function RemoteScreen({ session }: Props) {
       useNativeDriver: true,
     }).start();
   }, [mode, transition]);
+
+  useEffect(() => {
+    if (!session.secureDesktopActive) return;
+    setMode('desktop');
+    setAppsVisible(false);
+    setMenuVisible(false);
+  }, [session.secureDesktopActive]);
 
   useEffect(() => {
     if (!session.hostOnline) return;
@@ -143,6 +151,7 @@ export function RemoteScreen({ session }: Props) {
   }, [windows, session.shellSnapshot, session.shellResults, session.requestIcons]);
 
   const selectMode = (next: Mode) => {
+    if (session.secureDesktopActive && next !== 'desktop') return;
     setMode(next);
     setMenuVisible(false);
   };
@@ -179,18 +188,32 @@ export function RemoteScreen({ session }: Props) {
     session.requestShell(true);
   };
 
+  const forgetPC = () => {
+    Alert.alert(
+      'Forget this PC?',
+      'This phone will lose access. You can add it again from the PC device manager.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Forget', style: 'destructive', onPress: session.disconnect },
+      ],
+    );
+  };
+
   const statusText = session.status === 'connected'
-    ? session.hostOnline ? 'Live' : 'PC offline'
+    ? session.secureDesktopActive ? 'Windows sign-in' : session.hostOnline ? 'Live' : 'PC offline'
     : session.status === 'reconnecting' ? 'Reconnecting' : 'Connecting';
-  const headerName = mode === 'home'
-    ? 'PocketDesk'
-    : pendingSelection?.label ?? (activeWindow ? windowDisplayName(activeWindow, session.shellSnapshot?.apps ?? []) : null) ?? session.desktopMeta?.machineName ?? 'PocketDesk';
+  const headerName = session.secureDesktopActive
+    ? 'Windows sign-in'
+    : mode === 'home'
+      ? 'PocketDesk'
+      : pendingSelection?.label ?? (activeWindow ? windowDisplayName(activeWindow, session.shellSnapshot?.apps ?? []) : null) ?? session.desktopMeta?.machineName ?? 'PocketDesk';
   const activeIconKey = activeWindow
     ? resolveWindowIconKey(activeWindow, session.shellSnapshot?.apps ?? [])
     : '';
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+      <KeyboardAvoidingView style={styles.safeArea} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.header}>
         <MotionPressable onPress={() => setMenuVisible(true)} style={styles.headerButton} accessibilityLabel="Open navigation menu">
           <View style={styles.menuGlyph}><View style={styles.menuLine} /><View style={styles.menuLineShort} /><View style={styles.menuLine} /></View>
@@ -213,16 +236,18 @@ export function RemoteScreen({ session }: Props) {
             <View style={styles.headerButtonInner}><Text style={styles.fitText}>{desktopFit === 'cover' ? 'Fit' : 'Fill'}</Text></View>
           </MotionPressable>
         ) : null}
-        <MotionPressable
-          onPress={() => { session.requestShell(); session.refreshSemantic(); setAppsVisible(true); }}
-          style={styles.appsButton}
-          accessibilityLabel="Open app library"
-        >
-          <View style={styles.appsButtonInner}>
-            <View style={styles.appsGlyph}><View style={styles.appsGlyphSquare} /><View style={styles.appsGlyphSquare} /><View style={styles.appsGlyphSquare} /><View style={styles.appsGlyphSquare} /></View>
-            {openAppCount ? <View style={styles.appsCount}><Text style={styles.appsCountText}>{openAppCount}</Text></View> : null}
-          </View>
-        </MotionPressable>
+        {!session.secureDesktopActive ? (
+          <MotionPressable
+            onPress={() => { session.requestShell(); session.refreshSemantic(); setAppsVisible(true); }}
+            style={styles.appsButton}
+            accessibilityLabel="Open app library"
+          >
+            <View style={styles.appsButtonInner}>
+              <View style={styles.appsGlyph}><View style={styles.appsGlyphSquare} /><View style={styles.appsGlyphSquare} /><View style={styles.appsGlyphSquare} /><View style={styles.appsGlyphSquare} /></View>
+              {openAppCount ? <View style={styles.appsCount}><Text style={styles.appsCountText}>{openAppCount}</Text></View> : null}
+            </View>
+          </MotionPressable>
+        ) : null}
       </View>
 
       {session.error ? <View style={styles.errorBanner}><Text style={styles.errorText} numberOfLines={2}>{session.error}</Text></View> : null}
@@ -242,7 +267,7 @@ export function RemoteScreen({ session }: Props) {
             onOpenWindow={openWindow}
             onOpenLibrary={() => setAppsVisible(true)}
             onRefresh={refreshAll}
-            onPairAgain={session.disconnect}
+            onPairAgain={forgetPC}
           />
         ) : mode === 'mobile' ? (
           <SemanticWorkspace
@@ -270,17 +295,22 @@ export function RemoteScreen({ session }: Props) {
             onClearFileDownload={session.clearFileDownload}
           />
         ) : mode === 'desktop' ? (
-          <LiveCanvas frameUri={session.frameUri} meta={session.desktopMeta} interactive hostOnline={session.hostOnline} onInput={session.sendInput} fill resizeMode={desktopFit} />
+          <View style={styles.desktopStage}>
+            <LiveCanvas frameUri={session.frameUri} meta={session.desktopMeta} interactive hostOnline={session.hostOnline} onInput={session.sendInput} fill resizeMode={desktopFit} />
+            <DesktopInputBar onInput={session.sendInput} secure={session.secureDesktopActive} />
+          </View>
         ) : (
           <ControlPanel meta={session.desktopMeta} onInput={session.sendInput} onQuality={session.setQuality} />
         )}
       </Animated.View>
 
-      <View style={styles.dock} accessibilityRole="tablist">
-        {MODES.map((item) => (
-          <ModeButton key={item.mode} {...item} current={mode} onPress={selectMode} />
-        ))}
-      </View>
+      {!session.secureDesktopActive ? (
+        <View style={styles.dock} accessibilityRole="tablist">
+          {MODES.map((item) => (
+            <ModeButton key={item.mode} {...item} current={mode} onPress={selectMode} />
+          ))}
+        </View>
+      ) : null}
 
       <NavigationDrawer
         visible={menuVisible}
@@ -288,11 +318,12 @@ export function RemoteScreen({ session }: Props) {
         statusText={statusText}
         latencyMs={session.latencyMs}
         hostOnline={session.hostOnline}
+        secureDesktopActive={session.secureDesktopActive}
         onClose={() => setMenuVisible(false)}
         onSelectMode={selectMode}
         onOpenApps={() => { setMenuVisible(false); setAppsVisible(true); }}
         onRefresh={() => { refreshAll(); setMenuVisible(false); }}
-        onDisconnect={session.disconnect}
+        onDisconnect={forgetPC}
       />
 
       <AppLibraryModal
@@ -306,6 +337,7 @@ export function RemoteScreen({ session }: Props) {
         onRefresh={refreshAll}
         onRequestIcons={session.requestIcons}
       />
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -316,6 +348,7 @@ function NavigationDrawer({
   statusText,
   latencyMs,
   hostOnline,
+  secureDesktopActive,
   onClose,
   onSelectMode,
   onOpenApps,
@@ -327,6 +360,7 @@ function NavigationDrawer({
   statusText: string;
   latencyMs: number | null;
   hostOnline: boolean;
+  secureDesktopActive: boolean;
   onClose: () => void;
   onSelectMode: (mode: Mode) => void;
   onOpenApps: () => void;
@@ -343,30 +377,39 @@ function NavigationDrawer({
             <View><Text style={styles.drawerTitle}>PocketDesk</Text><Text style={styles.drawerSubtitle}>Remote workspace</Text></View>
           </View>
 
-          <Text style={styles.drawerLabel}>Navigation</Text>
-          {MODES.map((item) => {
-            const active = item.mode === mode;
-            return (
-              <MotionPressable key={item.mode} onPress={() => onSelectMode(item.mode)} style={[styles.drawerItem, active && styles.drawerItemActive]} accessibilityState={{ selected: active }}>
-                <View style={styles.drawerItemInner}>
-                  <Text style={[styles.drawerItemGlyph, active && styles.drawerItemGlyphActive]}>{item.glyph}</Text>
-                  <View style={styles.drawerItemCopy}><Text style={[styles.drawerItemTitle, active && styles.drawerItemTitleActive]}>{item.label}</Text><Text style={[styles.drawerItemDetail, active && styles.drawerItemDetailActive]}>{item.detail}</Text></View>
-                  {active ? <View style={styles.drawerActiveDot} /> : null}
-                </View>
-              </MotionPressable>
-            );
-          })}
+          {secureDesktopActive ? (
+            <View style={styles.secureDrawerCard}>
+              <Text style={styles.secureDrawerTitle}>Windows is locked</Text>
+              <Text style={styles.secureDrawerBody}>Desktop, pointer, and keyboard controls remain available. Apps and files return after sign-in.</Text>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.drawerLabel}>Navigation</Text>
+              {MODES.map((item) => {
+                const active = item.mode === mode;
+                return (
+                  <MotionPressable key={item.mode} onPress={() => onSelectMode(item.mode)} style={[styles.drawerItem, active && styles.drawerItemActive]} accessibilityState={{ selected: active }}>
+                    <View style={styles.drawerItemInner}>
+                      <Text style={[styles.drawerItemGlyph, active && styles.drawerItemGlyphActive]}>{item.glyph}</Text>
+                      <View style={styles.drawerItemCopy}><Text style={[styles.drawerItemTitle, active && styles.drawerItemTitleActive]}>{item.label}</Text><Text style={[styles.drawerItemDetail, active && styles.drawerItemDetailActive]}>{item.detail}</Text></View>
+                      {active ? <View style={styles.drawerActiveDot} /> : null}
+                    </View>
+                  </MotionPressable>
+                );
+              })}
 
-          <Text style={styles.drawerLabel}>Workspace</Text>
-          <DrawerAction glyph="▦" label="App library" onPress={onOpenApps} />
-          <DrawerAction glyph="↻" label="Refresh current view" onPress={onRefresh} />
+              <Text style={styles.drawerLabel}>Workspace</Text>
+              <DrawerAction glyph="▦" label="App library" onPress={onOpenApps} />
+              <DrawerAction glyph="↻" label="Refresh current view" onPress={onRefresh} />
+            </>
+          )}
 
           <View style={styles.drawerSpacer} />
           <View style={styles.connectionCard}>
             <View style={[styles.connectionDot, !hostOnline && styles.connectionDotOffline]} />
             <View style={styles.connectionCopy}><Text style={styles.connectionTitle}>{statusText}</Text><Text style={styles.connectionDetail}>{latencyMs === null ? 'Secure relay connection' : `${latencyMs} ms relay latency`}</Text></View>
           </View>
-          <Pressable onPress={onDisconnect} style={styles.disconnectButton}><Text style={styles.disconnectText}>Disconnect</Text></Pressable>
+          <Pressable onPress={onDisconnect} style={styles.disconnectButton}><Text style={styles.disconnectText}>Forget this PC</Text></Pressable>
         </SafeAreaView>
       </View>
     </Modal>
@@ -432,6 +475,7 @@ const styles = StyleSheet.create({
   errorBanner: { marginHorizontal: 12, marginTop: 8, borderRadius: 10, backgroundColor: '#2A1111', borderWidth: 1, borderColor: '#512525', paddingHorizontal: 12, paddingVertical: 9 },
   errorText: { color: colors.danger, fontSize: 11, lineHeight: 15 },
   main: { flex: 1 },
+  desktopStage: { flex: 1 },
   dock: { height: 66, marginHorizontal: 10, marginTop: 6, marginBottom: 5, borderRadius: 22, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', padding: 5, gap: 3 },
   tab: { flex: 1, borderRadius: 17 },
   tabActive: { backgroundColor: colors.primary },
@@ -449,6 +493,9 @@ const styles = StyleSheet.create({
   drawerTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
   drawerSubtitle: { color: colors.textMuted, fontSize: 9, marginTop: 3 },
   drawerLabel: { color: colors.textDim, fontSize: 9, fontWeight: '800', letterSpacing: 1.1, textTransform: 'uppercase', marginTop: 9, marginBottom: 7, paddingHorizontal: 6 },
+  secureDrawerCard: { borderRadius: 14, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 16, marginTop: 10 },
+  secureDrawerTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  secureDrawerBody: { color: colors.textMuted, fontSize: 10, lineHeight: 15, marginTop: 6 },
   drawerItem: { height: 60, borderRadius: 14, marginBottom: 3 },
   drawerItemActive: { backgroundColor: colors.primary },
   drawerItemInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 },

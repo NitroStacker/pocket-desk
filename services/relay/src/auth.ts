@@ -1,6 +1,6 @@
 const encoder = new TextEncoder();
 
-export type SocketRole = "host" | "viewer";
+export type SocketRole = "host" | "secure" | "viewer";
 
 export interface SocketCredentials {
   role: SocketRole;
@@ -60,7 +60,7 @@ export function parseSocketProtocols(
   if (!protocols.includes("pocketdesk-v1")) return null;
 
   for (const protocol of protocols) {
-    const match = /^(host|viewer)\.([a-f0-9]{64})$/.exec(protocol);
+    const match = /^(host|secure|viewer)\.([a-f0-9]{64})$/.exec(protocol);
     if (match) {
       return { role: match[1] as SocketRole, token: match[2] };
     }

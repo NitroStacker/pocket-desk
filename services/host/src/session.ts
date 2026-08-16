@@ -1,16 +1,18 @@
 export interface RelayCredentials {
   sessionId: string;
   hostToken: string;
-  viewerToken: string;
   pairingCode: string;
+  pairingExpiresAt: number;
   relayUrl: string;
   expiresAt: number;
+  persistent: boolean;
 }
 
 export async function createRelaySession(
   relayUrl: string,
   adminToken: string,
   expiresInHours: number,
+  persistent = true,
 ): Promise<RelayCredentials> {
   const response = await fetch(`${relayUrl}/api/sessions`, {
     method: "POST",
@@ -18,7 +20,7 @@ export async function createRelaySession(
       Authorization: `Bearer ${adminToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ expiresInHours }),
+    body: JSON.stringify({ expiresInHours, persistent }),
     signal: AbortSignal.timeout(15_000),
   });
 
@@ -40,10 +42,11 @@ function isRelayCredentials(value: unknown): value is RelayCredentials {
     isRecord(value) &&
     typeof value.sessionId === "string" &&
     typeof value.hostToken === "string" &&
-    typeof value.viewerToken === "string" &&
     typeof value.pairingCode === "string" &&
+    typeof value.pairingExpiresAt === "number" &&
     typeof value.relayUrl === "string" &&
-    typeof value.expiresAt === "number"
+    typeof value.expiresAt === "number" &&
+    typeof value.persistent === "boolean"
   );
 }
 

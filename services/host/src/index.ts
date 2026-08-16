@@ -13,6 +13,11 @@ import { IconController, type IconTarget } from "./icons.js";
 import { FileBrowserController, isSafeRequestId, parseFileOperation } from "./files.js";
 import { captureSemanticSnapshot, type SemanticSnapshot, type SemanticWindow } from "./semantic.js";
 import { createRelaySession } from "./session.js";
+import {
+  clearStoredRelaySession,
+  loadStoredRelaySession,
+  saveRelaySession,
+} from "./session-store.js";
 import { ShellController } from "./shell.js";
 import { VisualController } from "./visual.js";
 
@@ -22,17 +27,40 @@ if (process.platform !== "win32") {
 }
 
 const config = readConfig(process.argv.slice(2), process.env);
-const session = await createRelaySession(
-  config.relayUrl,
-  config.adminToken,
-  config.expiresInHours,
-);
+if (config.resetPairing) await clearStoredRelaySession();
+let session = config.persistent
+  ? await loadStoredRelaySession(config.relayUrl)
+  : null;
+const createdSession = !session;
+if (!session) {
+  if (!config.adminToken) {
+    throw new Error(
+      "No saved pairing was found. Set POCKETDESK_ADMIN_TOKEN once to enroll this host.",
+    );
+  }
+  session = await createRelaySession(
+    config.relayUrl,
+    config.adminToken,
+    config.expiresInHours,
+    config.persistent,
+  );
+  if (config.persistent) await saveRelaySession(session);
+}
+const activeSession = session;
 
-console.log("\nPocketDesk Host is ready to pair");
-console.log(`Relay: ${session.relayUrl}`);
-console.log(`Pairing code: ${session.pairingCode}`);
-console.log(`Expires: ${new Date(session.expiresAt).toLocaleString()}`);
-console.log("\nOpen the Expo Go app, enter the relay and pairing code, then connect.\n");
+console.log("\nPocketDesk Host is ready");
+console.log(`Relay: ${activeSession.relayUrl}`);
+if (createdSession) {
+  console.log(`One-time pairing code: ${activeSession.pairingCode}`);
+  console.log(`Add-device code expires: ${new Date(activeSession.pairingExpiresAt).toLocaleTimeString()}`);
+  if (!activeSession.persistent) {
+    console.log(`Expires: ${new Date(activeSession.expiresAt).toLocaleString()}`);
+  }
+  console.log("\nPaste this code into PocketDesk on your phone. It can only be used once.\n");
+} else {
+  console.log("Trusted phones can reconnect automatically.");
+  console.log("Use scripts\\manage-devices.ps1 on this PC to add or remove phones.\n");
+}
 
 let socket: WebSocket | null = null;
 let viewerCount = 0;
@@ -44,6 +72,7 @@ let semanticRequest: Promise<void> | null = null;
 let semanticRescanRequested = false;
 let semanticRefreshTimer: NodeJS.Timeout | null = null;
 let streamEnabled = false;
+let secureDesktopActive = false;
 let semanticWindowsByHandle = new Map<number, SemanticWindow>();
 let semanticTargetProcessId = 0;
 let semanticTargetWindowHandle = 0;
@@ -98,10 +127,10 @@ connect();
 function connect(): void {
   if (shuttingDown) return;
 
-  const socketUrl = `${session.relayUrl.replace(/^http/, "ws")}/connect/${session.sessionId}`;
+  const socketUrl = `${activeSession.relayUrl.replace(/^http/, "ws")}/connect/${activeSession.sessionId}`;
   const next = new WebSocket(socketUrl, [
     "pocketdesk-v1",
-    `host.${session.hostToken}`,
+    `host.${activeSession.hostToken}`,
   ], {
     perMessageDeflate: false,
     handshakeTimeout: 15_000,
@@ -175,6 +204,16 @@ function handleRelayMessage(raw: string): void {
         streamEnabled = false;
         capture.setPaused(true);
       }
+    }
+    return;
+  }
+
+  if (message.type === "secure-status") {
+    const wasActive = secureDesktopActive;
+    secureDesktopActive = message.active === true;
+    capture.setPaused(!streamEnabled || secureDesktopActive);
+    if (wasActive && !secureDesktopActive && desktopMeta) {
+      sendJson({ type: "desktop-meta", payload: desktopMeta });
     }
     return;
   }
@@ -307,7 +346,7 @@ function handleRelayMessage(raw: string): void {
 
   if (message.type === "set-stream" && isRecord(message.payload)) {
     streamEnabled = message.payload.enabled === true && viewerCount > 0;
-    capture.setPaused(!streamEnabled);
+    capture.setPaused(!streamEnabled || secureDesktopActive);
     return;
   }
 

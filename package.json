@@ -12,6 +12,8 @@
     "relay:dev": "npm run dev --workspace @pocketdesk/relay",
     "relay:deploy": "npm run deploy --workspace @pocketdesk/relay",
     "relay:types": "npm run cf-types --workspace @pocketdesk/relay",
+    "secure-host:build": "dotnet build services/windows-service/PocketDesk.SecureHost.csproj -c Release",
+    "secure-host:publish": "dotnet publish services/windows-service/PocketDesk.SecureHost.csproj -c Release -r win-x64 --self-contained true -o services/windows-service/dist/win-x64",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
   },
