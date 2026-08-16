@@ -31,7 +31,7 @@ interface Props {
   icons: Record<string, string>;
   onSearch: (query: string) => void;
   onLaunch: (id: string) => void;
-  onOpenWindow: (processId: number, windowHandle: number) => void;
+  onOpenApp: (groupKey: string) => void;
   onOpenLibrary: () => void;
   onRefresh: () => void;
   onPairAgain: () => void;
@@ -47,7 +47,7 @@ export function HomeScreen({
   icons,
   onSearch,
   onLaunch,
-  onOpenWindow,
+  onOpenApp,
   onOpenLibrary,
   onRefresh,
   onPairAgain,
@@ -207,13 +207,16 @@ export function HomeScreen({
                   return (
                     <MotionPressable
                       key={group.key}
-                      onPress={() => onOpenWindow(window.processId, window.windowHandle)}
+                      onPress={() => onOpenApp(group.key)}
                       style={styles.runningApp}
-                      accessibilityLabel={`Open ${group.name}`}
+                      accessibilityLabel={group.windows.length > 1
+                        ? `Choose from ${group.windows.length} ${group.name} windows`
+                        : `Open ${group.name}`}
                     >
                       <View style={styles.runningAppInner}>
                         <View style={[styles.runningIcon, window.active && styles.runningIconActive]}>
                           <RemoteIcon iconKey={group.iconKey} icons={icons} size={45} radius={12} active={window.active} />
+                          {group.windows.length > 1 ? <View style={styles.windowCountBadge}><Text style={styles.windowCountText}>{group.windows.length}</Text></View> : null}
                         </View>
                         <Text style={styles.runningName} numberOfLines={1}>{group.name}</Text>
                         <View style={[styles.runningDot, window.active && styles.runningDotActive]} />
@@ -342,6 +345,8 @@ const styles = StyleSheet.create({
   runningAppInner: { flex: 1, alignItems: 'center' },
   runningIcon: { width: 51, height: 51, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   runningIconActive: { borderWidth: 1, borderColor: colors.borderStrong },
+  windowCountBadge: { position: 'absolute', right: -5, top: -5, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: colors.primary, borderWidth: 2, borderColor: colors.surface, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  windowCountText: { color: colors.inverseText, fontSize: 8, fontWeight: '800' },
   runningName: { width: 68, color: colors.textMuted, fontSize: 9, textAlign: 'center', marginTop: 5 },
   runningDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: colors.textDim, marginTop: 4 },
   runningDotActive: { width: 4, height: 4, backgroundColor: colors.text },

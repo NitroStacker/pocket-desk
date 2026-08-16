@@ -17,12 +17,18 @@ describe("desktop input validation", () => {
       parseInputCommand({ kind: "focusWindow", processId: 2840, windowHandle: 133502 }),
       { kind: "focusWindow", processId: 2840, windowHandle: 133502 },
     );
+    assert.deepEqual(
+      parseInputCommand({ kind: "closeWindow", processId: 2840, windowHandle: 133502 }),
+      { kind: "closeWindow", processId: 2840, windowHandle: 133502 },
+    );
   });
 
   it("rejects out-of-bounds or unknown commands", () => {
     assert.equal(parseInputCommand({ kind: "tap", x: -1, y: 0.5 }), null);
     assert.equal(parseInputCommand({ kind: "shell", command: "whoami" }), null);
     assert.equal(parseInputCommand({ kind: "focusWindow", processId: 2840, windowHandle: -1 }), null);
+    assert.equal(parseInputCommand({ kind: "closeWindow", processId: 2840 }), null);
+    assert.equal(parseInputCommand({ kind: "closeWindow", processId: 2840, windowHandle: -1 }), null);
     assert.equal(
       parseInputCommand({ kind: "shortcut", keys: ["Ctrl", "Unknown"] }),
       null,

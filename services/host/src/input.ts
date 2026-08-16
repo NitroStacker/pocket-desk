@@ -10,7 +10,8 @@ type InputCommand =
   | { kind: "shortcut"; keys: string[] }
   | { kind: "text"; text: string }
   | { kind: "replaceText"; x: number; y: number; text: string }
-  | { kind: "focusWindow"; processId: number; windowHandle?: number };
+  | { kind: "focusWindow"; processId: number; windowHandle?: number }
+  | { kind: "closeWindow"; processId: number; windowHandle: number };
 
 const ALLOWED_KEYS = new Set([
   "Backspace",
@@ -143,7 +144,7 @@ export function parseInputCommand(value: unknown): InputCommand | null {
   }
 
   if (
-    value.kind === "focusWindow" &&
+    (value.kind === "focusWindow" || value.kind === "closeWindow") &&
     typeof value.processId === "number" &&
     Number.isSafeInteger(value.processId) &&
     value.processId > 0
@@ -154,11 +155,12 @@ export function parseInputCommand(value: unknown): InputCommand | null {
         !Number.isSafeInteger(value.windowHandle) ||
         value.windowHandle <= 0)
     ) return null;
+    if (value.kind === "closeWindow" && typeof value.windowHandle !== "number") return null;
     return {
-      kind: "focusWindow",
+      kind: value.kind,
       processId: value.processId,
       ...(typeof value.windowHandle === "number" ? { windowHandle: value.windowHandle } : {}),
-    };
+    } as InputCommand;
   }
 
   return null;

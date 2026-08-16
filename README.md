@@ -21,6 +21,7 @@ The phone app runs in Expo Go. Both the phone and the Windows host make outbound
 - Trackpad, left/right click, scrolling, text paste, and common keyboard shortcuts
 - Automatic semantic refresh after interactions and while the mobile workspace is visible
 - Top-level Win32 window enumeration and handle-pinned selection, including File Explorer windows that are not exposed through `Process.MainWindowHandle`
+- Window-aware app launching that reuses an existing instance, offers a chooser when several windows are open, and supports closing one exact validated window from the phone
 - A dedicated File Explorer phone layout with real navigation, address/search fields, commands, tabs, folders, files, and status
 - Phone-native file management with thumbnails, copy, move, rename, delete, folder creation, and downloads through the iOS share sheet
 - A reusable adapter registry with tailored live layouts for Bezi, Chrome, ChatGPT/Codex, Windows Settings, Notepad and common document apps, and Windows Camera

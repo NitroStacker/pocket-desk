@@ -205,7 +205,7 @@ export type InputCommand =
   | { kind: 'shortcut'; keys: string[] }
   | { kind: 'text'; text: string }
   | { kind: 'replaceText'; x: number; y: number; text: string }
-  | { kind: 'focusWindow'; processId: number; windowHandle: number };
+  | { kind: 'focusWindow' | 'closeWindow'; processId: number; windowHandle: number };
 
 export interface RemoteSessionApi {
   hasSession: boolean;

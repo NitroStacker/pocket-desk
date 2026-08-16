@@ -221,17 +221,20 @@ function handleRelayMessage(raw: string): void {
   if (message.type === "input") {
     if (
       isRecord(message.payload) &&
-      message.payload.kind === "focusWindow" &&
+      (message.payload.kind === "focusWindow" || message.payload.kind === "closeWindow") &&
       typeof message.payload.processId === "number" &&
       Number.isSafeInteger(message.payload.processId) &&
       message.payload.processId > 0
     ) {
+      const windowCommand = message.payload.kind;
       const requestedProcessId = message.payload.processId;
       const requestedHandle = typeof message.payload.windowHandle === "number" &&
         Number.isSafeInteger(message.payload.windowHandle) && message.payload.windowHandle > 0
         ? message.payload.windowHandle
         : 0;
-      const selected = requestedHandle > 0
+      const selected = windowCommand === "closeWindow" && requestedHandle <= 0
+        ? undefined
+        : requestedHandle > 0
         ? semanticWindowsByHandle.get(requestedHandle)
         : [...semanticWindowsByHandle.values()].find(
           (window) => window.processId === requestedProcessId,
@@ -239,6 +242,16 @@ function handleRelayMessage(raw: string): void {
       if (!selected || selected.processId !== requestedProcessId) {
         sendJson({ type: "error", code: "WINDOW_NOT_FOUND", message: "That application window is no longer open." });
         void sendSemanticSnapshot();
+        return;
+      }
+      if (windowCommand === "closeWindow") {
+        if (selected.windowHandle === semanticTargetWindowHandle) setSemanticTarget(0, 0);
+        input.send({
+          kind: "closeWindow",
+          processId: selected.processId,
+          windowHandle: selected.windowHandle,
+        });
+        scheduleSemanticRefresh();
         return;
       }
       setSemanticTarget(selected.processId, selected.windowHandle);
@@ -535,8 +548,22 @@ async function launchShellItem(id: unknown): Promise<void> {
   const previousProcessId = semanticTargetProcessId;
   const previousWindowHandle = semanticTargetWindowHandle;
   try {
-    const windowsBeforeLaunch = new Set(semanticWindowsByHandle.keys());
     const identity = shell.getLaunchIdentity(id);
+    const existingWindow = identity
+      ? findExistingWindowForLaunch([...semanticWindowsByHandle.values()], identity)
+      : null;
+    if (existingWindow) {
+      setSemanticTarget(existingWindow.processId, existingWindow.windowHandle);
+      input.send({
+        kind: "focusWindow",
+        processId: existingWindow.processId,
+        windowHandle: existingWindow.windowHandle,
+      });
+      sendJson({ type: "shell-launched", payload: { id, reused: true } });
+      setTimeout(() => void sendSemanticSnapshot(), 450);
+      return;
+    }
+    const windowsBeforeLaunch = new Set(semanticWindowsByHandle.keys());
     setSemanticTarget(0, 0);
     pendingLaunch = {
       windowHandles: windowsBeforeLaunch,
@@ -686,6 +713,22 @@ function pickLaunchedWindow(
   return launch.attempts >= 3
     ? ranked.find((candidate) => candidate.window.active)?.window ?? null
     : null;
+}
+
+function findExistingWindowForLaunch(
+  windows: SemanticWindow[],
+  identity: { appName: string; processName: string },
+): SemanticWindow | null {
+  const expectedProcess = normalizeIdentity(identity.processName);
+  const expectedApp = normalizeIdentity(identity.appName);
+  if (!expectedProcess && !expectedApp) return null;
+  const matches = windows.filter((window) => {
+    const process = normalizeIdentity(window.process);
+    const title = normalizeIdentity(window.title);
+    if (expectedProcess) return process === expectedProcess;
+    return !!expectedApp && (process === expectedApp || title === expectedApp || title.startsWith(expectedApp));
+  });
+  return matches.find((window) => window.active) ?? matches[0] ?? null;
 }
 
 function normalizeIdentity(value: string): string {

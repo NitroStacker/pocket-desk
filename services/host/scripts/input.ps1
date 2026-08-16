@@ -16,6 +16,7 @@ public static class PocketDeskNative {
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr window, int command);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 }
 '@
@@ -156,6 +157,16 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
                     Send-KeyDown 0x12
                     Send-KeyUp 0x12
                     [void][PocketDeskNative]::SetForegroundWindow($window)
+                }
+            }
+            'closeWindow' {
+                $process = Get-Process -Id ([int]$command.processId) -ErrorAction Stop
+                $window = [IntPtr]([int64]$command.windowHandle)
+                $ownerProcessId = [uint32]0
+                [void][PocketDeskNative]::GetWindowThreadProcessId($window, [ref]$ownerProcessId)
+                if ([int]$ownerProcessId -ne $process.Id) { throw 'The selected window no longer belongs to that application.' }
+                if (-not [PocketDeskNative]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+                    throw 'Windows could not close the selected window.'
                 }
             }
         }
