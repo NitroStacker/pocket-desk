@@ -1,0 +1,77 @@
+# PocketDesk architecture
+
+## Components
+
+| Component | Runtime | Responsibility |
+| --- | --- | --- |
+| Mobile | Expo SDK 54 / React Native 0.81 | Pairing, mobile Start surface, app library, spatial application reflow, visual-region reconstruction, and precision input |
+| Host | Node.js plus built-in Windows PowerShell/.NET/WinRT APIs | Screen capture, adaptive JPEG encoding, input injection, deep UI Automation geometry scan, selected-window visual capture, Windows OCR segmentation, icon extraction, Start/taskbar catalog, and Windows file search |
+| Relay | Cloudflare Worker plus one SQLite-backed Durable Object per session | Session creation, authentication, WebSocket presence, frame/control forwarding |
+
+No direct inbound connection reaches the Windows PC. The host and viewer both initiate outbound connections to the relay.
+
+## Session lifecycle
+
+1. The host calls `POST /api/sessions` with the relay admin secret.
+2. The Worker creates a random session ID, a 256-bit host key, and a separate 256-bit viewer key.
+3. Only SHA-256 key hashes and the expiry are persisted in the session's Durable Object.
+4. The host prints `<session-id>.<viewer-key>` as the pairing code.
+5. Host and phone authenticate during the WebSocket handshake with subprotocols `host.<key>` or `viewer.<key>` plus `pocketdesk-v1`.
+6. The Durable Object attaches the connection role to the hibernating socket and forwards only role-appropriate message types.
+7. The object rejects new handshakes after expiry. Stopping the host ends desktop access; persisted session data expires logically within 24 hours.
+
+## Data plane
+
+Host to phone:
+
+- Binary WebSocket messages are complete JPEG frames.
+- `desktop-meta` describes capture dimensions, quality, profile, and machine name.
+- `semantic-snapshot` contains open windows plus each selected-app element's hierarchy, role, state, original order, bounds, desktop target coordinate, and exposed value.
+- `shell-snapshot` contains a sanitized Start menu and pinned-taskbar catalog. Shortcut target paths remain on the host.
+- `shell-results` contains app matches and sanitized file metadata with opaque item IDs.
+- `shell-launched` confirms an allowlisted app or file was handed to Windows.
+- `app-icon` returns one bounded PNG data URI for a previously issued app or open-window icon key.
+- `app-visual` returns one bounded JPEG of a previously issued, non-protected open window. The phone crops this source into reordered visual regions rather than presenting a tiny desktop viewport.
+- `pong`, `host-status`, and relay presence drive connection UI.
+
+Phone to host:
+
+- `input` contains one validated, allowlisted mouse, keyboard, window-focus, or text action.
+- `request-semantic` asks for a fresh active-window scan.
+- `request-shell` asks for the current Start/taskbar catalog.
+- `search-shell` searches the catalog and Windows Search index using a bounded query.
+- `launch-shell` may reference only an opaque ID previously issued by the host; the host never accepts a raw command or path.
+- `request-icons` requests bounded icon keys from the current catalog/window snapshot. The phone cannot submit an executable path.
+- `request-app-visual` requests a bounded visual only for an exact process/window-handle pair already issued in the current open-window snapshot.
+- `set-quality` changes among fixed, bounded capture profiles.
+- `set-stream` suspends desktop frame capture and delivery unless the full-screen Desktop surface is visible.
+- `ping` measures the round trip through the real host.
+
+The relay does not interpret frame bytes. It validates JSON message type allowlists and drops viewer binary messages.
+
+## Latency behavior
+
+JPEG frames are already compressed, so per-message WebSocket compression is disabled. The host sends a frame only while a viewer is present and the socket has less than 1.5 MB buffered. When the network slows, new frames are dropped; the app therefore remains close to live instead of replaying stale frames.
+
+The available capture profiles are:
+
+| Profile | Width cap | JPEG quality | Target FPS | Use |
+| --- | ---: | ---: | ---: | --- |
+| Smooth | 960 | 44 | 5 | Cellular data and interaction |
+| Balanced | 1280 | 56 | 4 | Default productivity use |
+| Sharp | 1600 | 68 | 3 | Reading text and static screens |
+
+## Mobile reshaping
+
+PocketDesk uses four interpretation layers, with interface reconstruction as the primary interface:
+
+1. A Raw UI Automation traversal extracts open windows, hierarchy, geometry, fields, values, actions, menus, tabs, options, and readable document content.
+2. The phone reconstructs the app by spatial role: tab and menu rows remain app chrome, toolbar controls stay together, side navigation becomes a narrow-screen strip, editors and content become the main surface, and status data remains at the bottom. It does not regroup elements into invented generic control sections.
+3. When the accessibility tree is sparse, Windows OCR is used only to find coherent visual regions. The host sends a bounded JPEG of the selected window and the phone stacks touchable crops of the real interface. Raw OCR fragments are not displayed as controls.
+4. The full-screen live desktop remains the precision compatibility layer.
+
+The Home view is a phone-native Windows Start surface. Its Apps toolbar opens a library that combines live windows, pinned taskbar apps, traditional Start menu shortcuts, and packaged Windows apps. Packaged apps are launched by validated App User Model IDs and use icons extracted from their signed package manifests. The host enumerates real top-level Win32 windows instead of relying on `Process.MainWindowHandle`; this is required for File Explorer, legacy packaged-app frames, and multiple windows owned by one process. Selecting a window pins semantic scans, visual capture, and subsequent mobile input to its validated process/window-handle pair so another foreground window cannot replace the chosen interface.
+
+The mobile client selects a renderer from a shared adapter registry. File Explorer, Bezi, Chrome, ChatGPT/Codex, Windows Settings, Notepad/document apps, and Camera each have layouts built from their actual accessibility controls and current window geometry. Camera and visual-heavy surfaces also use authenticated per-window visual capture; Camera refreshes its preview independently while its shutter and adjustment controls remain semantic. The Windows host keeps a dedicated, serialized DirectShow `IAMCameraControl` bridge alive for low-latency standard-UVC pan, tilt, and zoom. Camera commands are allow-listed and range-clamped, and the three user-saved PTZ presets persist under the current Windows user's local application data. Other applications use the universal semantic reflow and visual-region fallback. Activating any reconstructed control or visual region operates the corresponding element on the real desktop and requests a fresh reflow. Protected credential, lock, consent, and shell helper surfaces remain excluded.
+
+Window selection is revisioned. If an Explorer scan is already running when the viewer selects Bezi, the host discards the completed Explorer result instead of publishing stale UI. Start/taskbar launches also retain a local shortcut-to-process identity, allowing a single-instance app such as Bezi to select its existing window even when Windows leaves the previously focused app in the foreground.

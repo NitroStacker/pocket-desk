@@ -1,0 +1,21 @@
+{
+  "name": "pocketdesk",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "services/*"
+  ],
+  "scripts": {
+    "mobile": "npm run start --workspace @pocketdesk/mobile",
+    "host": "npm run start --workspace @pocketdesk/host",
+    "relay:dev": "npm run dev --workspace @pocketdesk/relay",
+    "relay:deploy": "npm run deploy --workspace @pocketdesk/relay",
+    "relay:types": "npm run cf-types --workspace @pocketdesk/relay",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

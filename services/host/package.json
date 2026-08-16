@@ -1,0 +1,23 @@
+{
+  "name": "@pocketdesk/host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts",
+    "smoke:capture": "node scripts/smoke-capture.mjs",
+    "smoke:relay": "node scripts/smoke-relay.mjs",
+    "smoke:live-shell": "node scripts/smoke-live-shell.mjs"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "4.23.12",
+    "typescript": "~5.9.2"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+.wrangler/
+dist/
+coverage/
+*.log
+.dev.vars
+.env
+.env.*
+.secrets/
+!.env.example
+!.dev.vars.example
