@@ -15,6 +15,13 @@ export interface CameraAxisStatus {
   flags: number;
 }
 
+export interface CameraIndicatorStatus {
+  supported: boolean;
+  desired: boolean;
+  effective: boolean | null;
+  error: string;
+}
+
 export interface CameraPtzStatus {
   device: string;
   available: boolean;
@@ -24,9 +31,13 @@ export interface CameraPtzStatus {
   pan: CameraAxisStatus;
   tilt: CameraAxisStatus;
   zoom: CameraAxisStatus;
+  indicator: CameraIndicatorStatus;
   presets: Array<{ slot: 1 | 2 | 3; saved: boolean }>;
   error: string;
 }
+
+const PIXY_INDICATOR_UNAVAILABLE =
+  "This PIXY firmware controls the green active-camera light internally and does not expose an Off control.";
 
 type CameraDirection = "Left" | "Right" | "Up" | "Down" | "ZoomIn" | "ZoomOut";
 type CameraCommand =
@@ -34,7 +45,8 @@ type CameraCommand =
   | { kind: "move"; direction: CameraDirection; amount: number }
   | { kind: "home" }
   | { kind: "presetSave"; slot: 1 | 2 | 3 }
-  | { kind: "presetRecall"; slot: 1 | 2 | 3 };
+  | { kind: "presetRecall"; slot: 1 | 2 | 3 }
+  | { kind: "indicatorSet"; enabled: boolean };
 
 interface RawCameraReport {
   device?: unknown;
@@ -43,7 +55,12 @@ interface RawCameraReport {
   pan?: unknown;
   tilt?: unknown;
   zoom?: unknown;
+  indicator?: unknown;
   error?: unknown;
+}
+
+interface CameraSettings {
+  indicatorEnabled: boolean;
 }
 
 interface Preset {
@@ -64,18 +81,31 @@ export class CameraController {
   private operation: Promise<void> = Promise.resolve();
   private readonly presets = new Map<1 | 2 | 3, Preset>();
   private presetsLoaded = false;
+  private settingsLoaded = false;
+  private indicatorEnabled = false;
   private readonly presetFile = path.join(
     process.env.LOCALAPPDATA || os.homedir(),
     "PocketDesk",
     "camera-presets.json",
   );
+  private readonly settingsFile = path.join(
+    process.env.LOCALAPPDATA || os.homedir(),
+    "PocketDesk",
+    "camera-settings.json",
+  );
   private lastStderr = "";
+
+  start(): void {
+    // Reserved for camera capabilities that require background reconciliation.
+    // PIXY firmware 2.x does not expose control of its active-camera light.
+  }
 
   run(value: unknown): Promise<CameraPtzStatus> {
     const command = parseCameraCommand(value);
     if (!command) return Promise.resolve(this.errorStatus("That camera control command was rejected."));
     const job = this.operation.then(async () => {
       await this.ensurePresetsLoaded();
+      await this.ensureSettingsLoaded();
       const status = await this.executeCommand(command);
       return status;
     });
@@ -94,6 +124,13 @@ export class CameraController {
 
   private async executeCommand(command: CameraCommand): Promise<CameraPtzStatus> {
     if (command.kind === "query") return this.executeRaw({ action: "Query", amount: 1 });
+    if (command.kind === "indicatorSet") {
+      const status = await this.executeRaw({ action: "Query", amount: 1 });
+      return {
+        ...status,
+        action: "Indicator control unavailable",
+      };
+    }
     if (command.kind === "move") {
       return this.executeRaw({ action: "Move", direction: command.direction, amount: command.amount });
     }
@@ -199,6 +236,12 @@ export class CameraController {
   private decorate(status: CameraPtzStatus): CameraPtzStatus {
     return {
       ...status,
+      indicator: {
+        supported: false,
+        desired: this.indicatorEnabled,
+        effective: null,
+        error: PIXY_INDICATOR_UNAVAILABLE,
+      },
       presets: ([1, 2, 3] as const).map((slot) => ({ slot, saved: this.presets.has(slot) })),
     };
   }
@@ -230,6 +273,18 @@ export class CameraController {
     await writeFile(this.presetFile, JSON.stringify(serialized, null, 2), "utf8");
   }
 
+  private async ensureSettingsLoaded(): Promise<void> {
+    if (this.settingsLoaded) return;
+    this.settingsLoaded = true;
+    try {
+      const settings = parseCameraSettings(JSON.parse(await readFile(this.settingsFile, "utf8")));
+      this.indicatorEnabled = settings.indicatorEnabled;
+    } catch {
+      // Off is deliberately the safe default for a new or unreadable settings file.
+      this.indicatorEnabled = false;
+    }
+  }
+
   private errorStatus(error: string): CameraPtzStatus {
     const axis = emptyAxis();
     return this.decorate({
@@ -241,6 +296,12 @@ export class CameraController {
       pan: axis,
       tilt: { ...axis },
       zoom: { ...axis },
+      indicator: {
+        supported: false,
+        desired: this.indicatorEnabled,
+        effective: null,
+        error: "",
+      },
       presets: [],
       error,
     });
@@ -250,6 +311,9 @@ export class CameraController {
 export function parseCameraCommand(value: unknown): CameraCommand | null {
   if (!isRecord(value) || typeof value.kind !== "string") return null;
   if (value.kind === "query" || value.kind === "home") return { kind: value.kind };
+  if (value.kind === "indicatorSet") {
+    return typeof value.enabled === "boolean" ? { kind: value.kind, enabled: value.enabled } : null;
+  }
   if (value.kind === "move") {
     const directions: CameraDirection[] = ["Left", "Right", "Up", "Down", "ZoomIn", "ZoomOut"];
     if (!directions.includes(value.direction as CameraDirection)) return null;
@@ -281,8 +345,22 @@ function parseReport(value: unknown): CameraPtzStatus {
     pan,
     tilt,
     zoom,
+    indicator: parseIndicator(raw.indicator),
     presets: [],
     error: clean(raw.error, 300),
+  };
+}
+
+function parseIndicator(value: unknown): CameraIndicatorStatus {
+  if (!isRecord(value)) {
+    return { supported: false, desired: false, effective: null, error: "" };
+  }
+  const enabled = typeof value.enabled === "boolean" ? value.enabled : null;
+  return {
+    supported: value.supported === true,
+    desired: false,
+    effective: value.applied === true ? enabled : null,
+    error: clean(value.error, 300),
   };
 }
 
@@ -313,6 +391,14 @@ function clean(value: unknown, length: number): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function parseCameraSettings(value: unknown): CameraSettings {
+  return {
+    indicatorEnabled: isRecord(value) && typeof value.indicatorEnabled === "boolean"
+      ? value.indicatorEnabled
+      : false,
+  };
 }
 
 function friendlyControllerError(message: string): string {

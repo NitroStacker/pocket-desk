@@ -97,6 +97,13 @@ export interface CameraAxisStatus {
   flags: number;
 }
 
+export interface CameraIndicatorStatus {
+  supported: boolean;
+  desired: boolean;
+  effective: boolean | null;
+  error: string;
+}
+
 export interface CameraPtzStatus {
   device: string;
   available: boolean;
@@ -106,6 +113,7 @@ export interface CameraPtzStatus {
   pan: CameraAxisStatus;
   tilt: CameraAxisStatus;
   zoom: CameraAxisStatus;
+  indicator: CameraIndicatorStatus;
   presets: Array<{ slot: 1 | 2 | 3; saved: boolean }>;
   error: string;
 }
@@ -115,7 +123,8 @@ export type CameraControlCommand =
   | { kind: 'move'; direction: 'Left' | 'Right' | 'Up' | 'Down' | 'ZoomIn' | 'ZoomOut'; amount?: number }
   | { kind: 'home' }
   | { kind: 'presetSave'; slot: 1 | 2 | 3 }
-  | { kind: 'presetRecall'; slot: 1 | 2 | 3 };
+  | { kind: 'presetRecall'; slot: 1 | 2 | 3 }
+  | { kind: 'indicatorSet'; enabled: boolean };
 
 export interface ShellApp {
   id: string;

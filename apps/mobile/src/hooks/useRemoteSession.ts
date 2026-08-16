@@ -768,6 +768,8 @@ function parseCameraStatus(value: unknown): CameraPtzStatus | null {
   const tilt = parseCameraAxis(value.tilt);
   const zoom = parseCameraAxis(value.zoom);
   if (!pan || !tilt || !zoom) return null;
+  const indicator = parseCameraIndicator(value.indicator);
+  if (!indicator) return null;
   const presets = value.presets.flatMap((preset) => {
     if (!isRecord(preset) || (preset.slot !== 1 && preset.slot !== 2 && preset.slot !== 3)) return [];
     return [{ slot: preset.slot as 1 | 2 | 3, saved: preset.saved === true }];
@@ -781,7 +783,27 @@ function parseCameraStatus(value: unknown): CameraPtzStatus | null {
     pan,
     tilt,
     zoom,
+    indicator,
     presets,
+    error: value.error,
+  };
+}
+
+function parseCameraIndicator(value: unknown): CameraPtzStatus['indicator'] | null {
+  if (value === undefined) {
+    return { supported: false, desired: false, effective: null, error: '' };
+  }
+  if (
+    !isRecord(value) ||
+    typeof value.supported !== 'boolean' ||
+    typeof value.desired !== 'boolean' ||
+    (typeof value.effective !== 'boolean' && value.effective !== null) ||
+    typeof value.error !== 'string'
+  ) return null;
+  return {
+    supported: value.supported,
+    desired: value.desired,
+    effective: value.effective,
     error: value.error,
   };
 }

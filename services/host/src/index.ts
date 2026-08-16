@@ -92,6 +92,7 @@ const files = new FileBrowserController();
 const icons = new IconController();
 const visuals = new VisualController();
 const camera = new CameraController();
+camera.start();
 void shell.getSnapshot().catch((error) => {
   console.error(`[shell] ${error instanceof Error ? error.message : "Could not read the Windows app catalog."}`);
 });

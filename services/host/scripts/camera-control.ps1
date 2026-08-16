@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Query', 'Move', 'Set', 'Home')]
+    [ValidateSet('Query', 'Move', 'Set', 'Home', 'Indicator')]
     [string]$Action = 'Query',
     [ValidateSet('', 'Left', 'Right', 'Up', 'Down', 'ZoomIn', 'ZoomOut')]
     [string]$Direction = '',
@@ -10,6 +10,7 @@ param(
     [int]$Zoom = [int]::MinValue,
     [ValidateLength(1, 120)]
     [string]$DeviceName = 'EMEET PIXY',
+    [switch]$IndicatorEnabled,
     [switch]$Server
 )
 
@@ -19,8 +20,10 @@ $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using Microsoft.Win32.SafeHandles;
 
 namespace PocketDesk.CameraControl {
     [ComImport, Guid("29840822-5B84-11D0-BD3B-00A0C911CE86"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -79,6 +82,7 @@ namespace PocketDesk.CameraControl {
         public AxisReport pan { get; set; }
         public AxisReport tilt { get; set; }
         public AxisReport zoom { get; set; }
+        public IndicatorReport indicator { get; set; }
         public bool moved { get; set; }
         public string error { get; set; }
         public PtzReport() {
@@ -87,8 +91,17 @@ namespace PocketDesk.CameraControl {
             pan = new AxisReport();
             tilt = new AxisReport();
             zoom = new AxisReport();
+            indicator = new IndicatorReport();
             error = "";
         }
+    }
+
+    public sealed class IndicatorReport {
+        public bool supported { get; set; }
+        public bool enabled { get; set; }
+        public bool applied { get; set; }
+        public string error { get; set; }
+        public IndicatorReport() { error = ""; }
     }
 
     public static class PtzBridge {
@@ -242,8 +255,222 @@ namespace PocketDesk.CameraControl {
             // safely releases the graph after the single requested operation.
         }
     }
+
+    public static class IndicatorBridge {
+        const uint CrSuccess = 0;
+        const uint PresentInterfaces = 0;
+        const uint GenericRead = 0x80000000;
+        const uint GenericWrite = 0x40000000;
+        const uint ShareRead = 0x00000001;
+        const uint ShareWrite = 0x00000002;
+        const uint OpenExisting = 3;
+        const ushort VendorId = 0x328f;
+        const ushort ProductId = 0x00c0;
+        const ushort PixyUsage = 0x0083;
+        const int ReportLength = 32;
+        const int IndicatorCommandLength = ReportLength * 2;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct HidAttributes {
+            public int Size;
+            public ushort VendorID;
+            public ushort ProductID;
+            public ushort VersionNumber;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct HidCaps {
+            public ushort Usage;
+            public ushort UsagePage;
+            public ushort InputReportByteLength;
+            public ushort OutputReportByteLength;
+            public ushort FeatureReportByteLength;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 17)]
+            public ushort[] Reserved;
+            public ushort NumberLinkCollectionNodes;
+            public ushort NumberInputButtonCaps;
+            public ushort NumberInputValueCaps;
+            public ushort NumberInputDataIndices;
+            public ushort NumberOutputButtonCaps;
+            public ushort NumberOutputValueCaps;
+            public ushort NumberOutputDataIndices;
+            public ushort NumberFeatureButtonCaps;
+            public ushort NumberFeatureValueCaps;
+            public ushort NumberFeatureDataIndices;
+        }
+
+        [DllImport("hid.dll")]
+        static extern void HidD_GetHidGuid(out Guid hidGuid);
+
+        [DllImport("hid.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool HidD_GetAttributes(SafeFileHandle device, ref HidAttributes attributes);
+
+        [DllImport("hid.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool HidD_GetPreparsedData(SafeFileHandle device, out IntPtr preparsedData);
+
+        [DllImport("hid.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool HidD_FreePreparsedData(IntPtr preparsedData);
+
+        [DllImport("hid.dll")]
+        static extern int HidP_GetCaps(IntPtr preparsedData, ref HidCaps capabilities);
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+        static extern uint CM_Get_Device_Interface_List_SizeW(
+            out uint length,
+            ref Guid interfaceClassGuid,
+            string deviceId,
+            uint flags
+        );
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+        static extern uint CM_Get_Device_Interface_ListW(
+            ref Guid interfaceClassGuid,
+            string deviceId,
+            [Out] char[] buffer,
+            uint bufferLength,
+            uint flags
+        );
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern SafeFileHandle CreateFile(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool WriteFile(
+            SafeFileHandle file,
+            byte[] buffer,
+            uint bytesToWrite,
+            out uint bytesWritten,
+            IntPtr overlapped
+        );
+
+        public static IndicatorReport Apply(byte[] report) {
+            var result = new IndicatorReport();
+            if (!IsAllowedReport(report)) {
+                result.error = "The indicator command did not match PocketDesk's fixed PIXY report.";
+                return result;
+            }
+            result.enabled = report[9] == 1 && report[10] == 1 && report[11] == 1;
+
+            try {
+                foreach (string path in PresentHidInterfaces()) {
+                    using (var handle = CreateFile(
+                        path,
+                        GenericRead | GenericWrite,
+                        ShareRead | ShareWrite,
+                        IntPtr.Zero,
+                        OpenExisting,
+                        0,
+                        IntPtr.Zero
+                    )) {
+                        if (handle == null || handle.IsInvalid) continue;
+                        var attributes = new HidAttributes { Size = Marshal.SizeOf(typeof(HidAttributes)) };
+                        if (!HidD_GetAttributes(handle, ref attributes)) continue;
+                        if (attributes.VendorID != VendorId || attributes.ProductID != ProductId) continue;
+
+                        result.supported = true;
+                        IntPtr preparsedData;
+                        if (!HidD_GetPreparsedData(handle, out preparsedData)) {
+                            result.error = "Windows could not inspect the PIXY indicator interface.";
+                            return result;
+                        }
+                        try {
+                            var caps = new HidCaps { Reserved = new ushort[17] };
+                            if (HidP_GetCaps(preparsedData, ref caps) < 0 ||
+                                caps.UsagePage != PixyUsage || caps.Usage != PixyUsage ||
+                                caps.OutputReportByteLength != ReportLength) {
+                                result.supported = false;
+                                result.error = "The connected EMEET device did not expose PIXY's indicator interface.";
+                                continue;
+                            }
+                        } finally {
+                            HidD_FreePreparsedData(preparsedData);
+                        }
+
+                        for (int offset = 0; offset < IndicatorCommandLength; offset += ReportLength) {
+                            var command = new byte[ReportLength];
+                            Array.Copy(report, offset, command, 0, ReportLength);
+                            uint written;
+                            if (!WriteFile(handle, command, ReportLength, out written, IntPtr.Zero) || written != ReportLength) {
+                                result.error = "Windows could not apply the PIXY indicator setting.";
+                                return result;
+                            }
+                        }
+                        result.applied = true;
+                        result.error = "";
+                        return result;
+                    }
+                }
+                result.error = "EMEET PIXY is not connected to Windows.";
+                return result;
+            } catch (Exception error) {
+                result.error = error.Message;
+                return result;
+            }
+        }
+
+        static bool IsAllowedReport(byte[] report) {
+            if (report == null || report.Length != IndicatorCommandLength) return false;
+            byte[] switchPrefix = { 0x09, 0x02, 0x02, 0x00, 0x00, 0x04, 0x00, 0x04, 0x00 };
+            for (int i = 0; i < switchPrefix.Length; i++) if (report[i] != switchPrefix[i]) return false;
+            bool allOff = report[9] == 0 && report[10] == 0 && report[11] == 0;
+            bool allOn = report[9] == 1 && report[10] == 1 && report[11] == 1;
+            if (!allOff && !allOn) return false;
+            for (int i = 12; i < ReportLength; i++) if (report[i] != 0) return false;
+
+            int brightnessOffset = ReportLength;
+            byte[] brightnessPrefix = { 0x09, 0x02, 0x02, 0x04, 0x00, 0x02, 0x00, 0x02, 0x00 };
+            for (int i = 0; i < brightnessPrefix.Length; i++) {
+                if (report[brightnessOffset + i] != brightnessPrefix[i]) return false;
+            }
+            byte brightness = report[brightnessOffset + 9];
+            if ((allOff && brightness != 0) || (allOn && brightness != 100)) return false;
+            for (int i = brightnessOffset + 10; i < report.Length; i++) if (report[i] != 0) return false;
+            return true;
+        }
+
+        static IEnumerable<string> PresentHidInterfaces() {
+            Guid hidGuid;
+            HidD_GetHidGuid(out hidGuid);
+            for (int attempt = 0; attempt < 3; attempt++) {
+                uint length;
+                uint result = CM_Get_Device_Interface_List_SizeW(out length, ref hidGuid, null, PresentInterfaces);
+                if (result != CrSuccess) throw new IOException("Windows could not enumerate HID interfaces.");
+                var buffer = new char[Math.Max(2, (int)length)];
+                result = CM_Get_Device_Interface_ListW(ref hidGuid, null, buffer, (uint)buffer.Length, PresentInterfaces);
+                if (result != CrSuccess) continue;
+                return new string(buffer).Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries);
+            }
+            throw new IOException("The Windows HID interface list changed while it was being read.");
+        }
+    }
 }
 '@
+
+function New-IndicatorReport([bool]$Enabled) {
+    [byte[]]$report = New-Object byte[] 64
+    [byte[]]$switchPrefix = @(0x09, 0x02, 0x02, 0x00, 0x00, 0x04, 0x00, 0x04, 0x00)
+    [Array]::Copy($switchPrefix, 0, $report, 0, $switchPrefix.Length)
+    [byte]$switch = if ($Enabled) { 1 } else { 0 }
+    $report[9] = $switch
+    $report[10] = $switch
+    $report[11] = $switch
+    [byte[]]$brightnessPrefix = @(0x09, 0x02, 0x02, 0x04, 0x00, 0x02, 0x00, 0x02, 0x00)
+    [Array]::Copy($brightnessPrefix, 0, $report, 32, $brightnessPrefix.Length)
+    $report[41] = if ($Enabled) { 100 } else { 0 }
+    return $report
+}
 
 function Invoke-CameraCommand(
     [string]$CommandAction,
@@ -253,22 +480,35 @@ function Invoke-CameraCommand(
     [int]$CommandTilt,
     [int]$CommandZoom
 ) {
-    [PocketDesk.CameraControl.PtzBridge]::Execute(
-        $DeviceName,
-        $CommandAction,
-        $CommandDirection,
-        $CommandAmount,
-        $CommandPan,
-        $CommandTilt,
-        $CommandZoom
-    )
+    $response = if ($CommandAction -eq 'Indicator') {
+        New-Object PocketDesk.CameraControl.PtzReport
+    } else {
+        [PocketDesk.CameraControl.PtzBridge]::Execute(
+            $DeviceName,
+            $CommandAction,
+            $CommandDirection,
+            $CommandAmount,
+            $CommandPan,
+            $CommandTilt,
+            $CommandZoom
+        )
+    }
+    # PIXY firmware 2.x does not advertise indicator control and ignores the
+    # generic EMEET RGB/brightness commands. Do not report a successful USB
+    # write as a physical light change, and do not keep sending ignored packets.
+    $response.indicator = New-Object PocketDesk.CameraControl.IndicatorReport
+    $response.indicator.supported = $false
+    $response.indicator.enabled = $true
+    $response.indicator.applied = $false
+    $response.indicator.error = 'This PIXY firmware controls the green active-camera light internally and does not expose an Off control.'
+    return $response
 }
 
 if ($Server) {
     while ($null -ne ($requestLine = [Console]::In.ReadLine())) {
         try {
             $request = $requestLine | ConvertFrom-Json
-            $requestAction = if (@('Query', 'Move', 'Set', 'Home') -contains [string]$request.action) { [string]$request.action } else { 'Query' }
+            $requestAction = if (@('Query', 'Move', 'Set', 'Home', 'Indicator') -contains [string]$request.action) { [string]$request.action } else { 'Query' }
             $requestDirection = if (@('', 'Left', 'Right', 'Up', 'Down', 'ZoomIn', 'ZoomOut') -contains [string]$request.direction) { [string]$request.direction } else { '' }
             $requestAmount = [Math]::Max(1, [Math]::Min(20, [int]$request.amount))
             $requestPan = if ($null -ne $request.pan) { [int]$request.pan } else { [int]::MinValue }
