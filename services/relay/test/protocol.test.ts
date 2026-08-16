@@ -10,6 +10,13 @@ describe("socket protocol parsing", () => {
     ).toEqual({ role: "viewer", token });
   });
 
+  it("accepts a secure host credential", () => {
+    const token = "b".repeat(64);
+    expect(
+      parseSocketProtocols(`pocketdesk-v1, secure.${token}`),
+    ).toEqual({ role: "secure", token });
+  });
+
   it("rejects missing protocol and malformed tokens", () => {
     expect(parseSocketProtocols(`viewer.${"a".repeat(64)}`)).toBeNull();
     expect(parseSocketProtocols("pocketdesk-v1, host.short")).toBeNull();
@@ -45,6 +52,10 @@ describe("relay message allowlist", () => {
     expect(isAllowedRelayMessage("host", '{"type":"file-thumbnail"}')).toBe(true);
     expect(isAllowedRelayMessage("host", '{"type":"file-download-chunk"}')).toBe(true);
     expect(isAllowedRelayMessage("host", '{"type":"input"}')).toBe(false);
+    expect(isAllowedRelayMessage("secure", '{"type":"secure-status"}')).toBe(true);
+    expect(isAllowedRelayMessage("secure", '{"type":"desktop-meta"}')).toBe(true);
+    expect(isAllowedRelayMessage("secure", '{"type":"semantic-snapshot"}')).toBe(false);
+    expect(isAllowedRelayMessage("secure", '{"type":"shell-snapshot"}')).toBe(false);
   });
 
   it("rejects malformed JSON", () => {

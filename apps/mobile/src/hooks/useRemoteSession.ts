@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { decode, encode } from 'base64-arraybuffer';
 import { Directory, File, Paths, type FileHandle } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { buildSocketUrl, parsePairingDetails } from '../lib/pairing';
+import { buildSocketUrl, checkTrustedDevice, enrollPairingCode } from '../lib/pairing';
+import {
+  forgetTrustedSession,
+  loadTrustedSession,
+  saveTrustedSession,
+} from '../lib/trustedSession';
 import type {
   AppVisual,
   CameraControlCommand,
@@ -27,6 +32,7 @@ interface RelayMessage {
   code?: unknown;
   payload?: unknown;
   hostOnline?: unknown;
+  active?: unknown;
   viewerCount?: unknown;
   timestamp?: unknown;
   message?: unknown;
@@ -34,6 +40,7 @@ interface RelayMessage {
 
 export function useRemoteSession(): RemoteSessionApi {
   const [hasSession, setHasSession] = useState(false);
+  const [restoringSession, setRestoringSession] = useState(true);
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [frameUri, setFrameUri] = useState<string | null>(null);
@@ -51,6 +58,7 @@ export function useRemoteSession(): RemoteSessionApi {
   const [fileOperation, setFileOperation] = useState<FileOperationState | null>(null);
   const [fileDownload, setFileDownload] = useState<FileDownloadState | null>(null);
   const [hostOnline, setHostOnline] = useState(false);
+  const [secureDesktopActive, setSecureDesktopActive] = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
 
@@ -59,6 +67,7 @@ export function useRemoteSession(): RemoteSessionApi {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamEnabledRef = useRef(false);
+  const secureDesktopActiveRef = useRef(false);
   const iconCacheRef = useRef<Record<string, string>>({});
   const requestedIconsRef = useRef(new Set<string>());
   const requestedFileThumbnailsRef = useRef(new Set<string>());
@@ -101,27 +110,16 @@ export function useRemoteSession(): RemoteSessionApi {
     setFileDownload(next);
   }, []);
 
-  const connect = useCallback(
-    (relayUrl: string, pairingCode: string) => {
-      let details: PairingDetails;
-      try {
-        details = parsePairingDetails(relayUrl, pairingCode);
-      } catch (connectionError) {
-        setError(
-          connectionError instanceof Error
-            ? connectionError.message
-            : 'Could not read the connection details.',
-        );
-        setStatus('error');
-        return;
-      }
-
+  const startSession = useCallback(
+    (details: PairingDetails) => {
       clearTimers();
       socketRef.current?.close();
       manualCloseRef.current = false;
       setHasSession(true);
       setStatus('connecting');
       setError(null);
+      secureDesktopActiveRef.current = false;
+      setSecureDesktopActive(false);
       resetFileState();
       let attempt = 0;
 
@@ -138,6 +136,18 @@ export function useRemoteSession(): RemoteSessionApi {
           if (typeof message.viewerCount === 'number') setViewerCount(message.viewerCount);
         } else if (message.type === 'host-status') {
           setHostOnline(message.hostOnline === true);
+        } else if (message.type === 'secure-status') {
+          const active = message.active === true;
+          if (secureDesktopActiveRef.current !== active) setFrameUri(null);
+          secureDesktopActiveRef.current = active;
+          setSecureDesktopActive(active);
+          if (active) setError(null);
+          if (socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(JSON.stringify({
+              type: 'set-stream',
+              payload: { enabled: streamEnabledRef.current },
+            }));
+          }
         } else if (message.type === 'desktop-meta' && isDesktopMeta(message.payload)) {
           setDesktopMeta(message.payload);
         } else if (message.type === 'semantic-snapshot') {
@@ -341,29 +351,70 @@ export function useRemoteSession(): RemoteSessionApi {
           if (pingTimerRef.current) clearInterval(pingTimerRef.current);
           pingTimerRef.current = null;
           setHostOnline(false);
+          secureDesktopActiveRef.current = false;
+          setSecureDesktopActive(false);
           if (manualCloseRef.current) return;
 
-          if (event.code === 1008 || event.code === 4003) {
+          if (event.code === 4003) {
+            void forgetTrustedSession();
+            setHasSession(false);
             setStatus('error');
-            setError('This pairing code was rejected or has expired.');
+            setError('This phone was removed from the PC trusted-device list.');
+            return;
+          }
+
+          if (event.code === 1008) {
+            setStatus('error');
+            setError('The saved connection was rejected. Remove this PC and add the phone again.');
             return;
           }
 
           attempt += 1;
-          if (attempt >= 6) {
-            setStatus('error');
-            setError('Could not reconnect. Disconnect and pair again when the host is ready.');
-            return;
-          }
           setStatus('reconnecting');
-          const delay = Math.min(10_000, 800 * 2 ** Math.min(attempt, 4));
+          const delay = Math.min(15_000, 800 * 2 ** Math.min(attempt, 5));
           retryTimerRef.current = setTimeout(openSocket, delay);
+          if (attempt === 2) {
+            void checkTrustedDevice(details).then((trusted) => {
+              if (trusted !== false || manualCloseRef.current) return;
+              manualCloseRef.current = true;
+              if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+              void forgetTrustedSession();
+              setHasSession(false);
+              setStatus('error');
+              setError('This phone is no longer in the PC trusted-device list.');
+            });
+          }
         };
       };
 
       openSocket();
     },
     [clearTimers, publishFileDownload, resetFileState],
+  );
+
+  const connect = useCallback(
+    async (relayUrl: string, pairingCode: string) => {
+      setStatus('connecting');
+      setError(null);
+      try {
+        const details = await enrollPairingCode(relayUrl, pairingCode);
+        startSession(details);
+        try {
+          await saveTrustedSession(details);
+        } catch {
+          setError('Connected, but this phone could not save the trusted-device key.');
+        }
+      } catch (connectionError) {
+        setHasSession(false);
+        setStatus('error');
+        setError(
+          connectionError instanceof Error
+            ? connectionError.message
+            : 'Could not pair with that PC.',
+        );
+      }
+    },
+    [startSession],
   );
 
   const disconnect = useCallback(() => {
@@ -386,8 +437,11 @@ export function useRemoteSession(): RemoteSessionApi {
     iconCacheRef.current = {};
     requestedIconsRef.current.clear();
     setHostOnline(false);
+    secureDesktopActiveRef.current = false;
+    setSecureDesktopActive(false);
     setViewerCount(0);
     setLatencyMs(null);
+    void forgetTrustedSession();
   }, [clearTimers, resetFileState]);
 
   const send = useCallback((message: unknown) => {
@@ -522,10 +576,31 @@ export function useRemoteSession(): RemoteSessionApi {
     [send],
   );
 
-  useEffect(() => disconnect, [disconnect]);
+  useEffect(() => {
+    let active = true;
+    void loadTrustedSession()
+      .then((details) => {
+        if (active && details) startSession(details);
+      })
+      .catch(() => {
+        if (active) setError('The saved trusted-device key could not be read.');
+      })
+      .finally(() => {
+        if (active) setRestoringSession(false);
+      });
+    return () => { active = false; };
+  }, [startSession]);
+
+  useEffect(() => () => {
+    manualCloseRef.current = true;
+    clearTimers();
+    socketRef.current?.close(1000, 'Viewer closed');
+    downloadRef.current?.handle.close();
+  }, [clearTimers]);
 
   return {
     hasSession,
+    restoringSession,
     status,
     error,
     frameUri,
@@ -543,6 +618,7 @@ export function useRemoteSession(): RemoteSessionApi {
     fileOperation,
     fileDownload,
     hostOnline,
+    secureDesktopActive,
     viewerCount,
     latencyMs,
     connect,

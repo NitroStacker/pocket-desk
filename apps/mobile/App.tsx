@@ -16,6 +16,7 @@ export default function App() {
         <ConnectionScreen
           error={session.error}
           status={session.status}
+          restoring={session.restoringSession}
           onConnect={session.connect}
         />
       )}

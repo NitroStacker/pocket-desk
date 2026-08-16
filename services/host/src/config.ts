@@ -1,7 +1,9 @@
 export interface HostConfig {
   relayUrl: string;
-  adminToken: string;
+  adminToken: string | null;
   expiresInHours: number;
+  persistent: boolean;
+  resetPairing: boolean;
   initialProfile: CaptureProfile;
 }
 
@@ -24,6 +26,8 @@ export function readConfig(argv: string[], env: NodeJS.ProcessEnv): HostConfig {
   const relayUrl = args.relay ?? env.POCKETDESK_RELAY_URL;
   const adminToken = args.admin ?? env.POCKETDESK_ADMIN_TOKEN;
   const expiresRaw = args.expires ?? env.POCKETDESK_EXPIRES_HOURS ?? "12";
+  const persistent = (args.temporary ?? env.POCKETDESK_TEMPORARY_SESSION) !== "true";
+  const resetPairing = (args["reset-pairing"] ?? env.POCKETDESK_RESET_PAIRING) === "true";
   const profileRaw = args.profile ?? env.POCKETDESK_CAPTURE_PROFILE ?? "balanced";
 
   if (!relayUrl) {
@@ -31,9 +35,9 @@ export function readConfig(argv: string[], env: NodeJS.ProcessEnv): HostConfig {
       "Missing relay URL. Set POCKETDESK_RELAY_URL or pass --relay <https://...>.",
     );
   }
-  if (!adminToken || adminToken.length < 32) {
+  if (adminToken && adminToken.length < 32) {
     throw new Error(
-      "Missing or weak admin token. Set POCKETDESK_ADMIN_TOKEN to the Worker secret (32+ characters).",
+      "The relay admin token must be at least 32 characters.",
     );
   }
 
@@ -58,8 +62,10 @@ export function readConfig(argv: string[], env: NodeJS.ProcessEnv): HostConfig {
 
   return {
     relayUrl: relayUrl.replace(/\/+$/, ""),
-    adminToken,
+    adminToken: adminToken ?? null,
     expiresInHours,
+    persistent,
+    resetPairing,
     initialProfile: profileRaw,
   };
 }

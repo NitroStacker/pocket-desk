@@ -11,6 +11,8 @@ export interface PairingDetails {
   relayUrl: string;
   sessionId: string;
   viewerToken: string;
+  deviceId?: string;
+  deviceName?: string;
 }
 
 export interface DesktopMeta {
@@ -199,6 +201,7 @@ export type InputCommand =
   | { kind: 'leftClick' | 'rightClick' }
   | { kind: 'scroll'; delta: number }
   | { kind: 'key'; key: string }
+  | { kind: 'secureAttention' }
   | { kind: 'shortcut'; keys: string[] }
   | { kind: 'text'; text: string }
   | { kind: 'replaceText'; x: number; y: number; text: string }
@@ -206,6 +209,7 @@ export type InputCommand =
 
 export interface RemoteSessionApi {
   hasSession: boolean;
+  restoringSession: boolean;
   status: ConnectionStatus;
   error: string | null;
   frameUri: string | null;
@@ -223,9 +227,10 @@ export interface RemoteSessionApi {
   fileOperation: FileOperationState | null;
   fileDownload: FileDownloadState | null;
   hostOnline: boolean;
+  secureDesktopActive: boolean;
   viewerCount: number;
   latencyMs: number | null;
-  connect: (relayUrl: string, pairingCode: string) => void;
+  connect: (relayUrl: string, pairingCode: string) => Promise<void>;
   disconnect: () => void;
   sendInput: (command: InputCommand) => void;
   refreshSemantic: () => void;

@@ -6,19 +6,20 @@
 | --- | --- | --- |
 | Mobile | Expo SDK 54 / React Native 0.81 | Pairing, mobile Start surface, app library, spatial application reflow, visual-region reconstruction, and precision input |
 | Host | Node.js plus built-in Windows PowerShell/.NET/WinRT APIs | Screen capture, adaptive JPEG encoding, input injection, deep UI Automation geometry scan, selected-window visual capture, Windows OCR segmentation, icon extraction, Start/taskbar catalog, and Windows file search |
+| Secure host | Native .NET 8 Windows service plus per-console-session LocalSystem worker | Boot-time relay connection, Windows sign-in/lock desktop detection, restricted JPEG capture, and direct pointer/Unicode keyboard injection |
 | Relay | Cloudflare Worker plus one SQLite-backed Durable Object per session | Session creation, authentication, WebSocket presence, frame/control forwarding |
 
 No direct inbound connection reaches the Windows PC. The host and viewer both initiate outbound connections to the relay.
 
 ## Session lifecycle
 
-1. The host calls `POST /api/sessions` with the relay admin secret.
-2. The Worker creates a random session ID, a 256-bit host key, and a separate 256-bit viewer key.
-3. Only SHA-256 key hashes and the expiry are persisted in the session's Durable Object.
-4. The host prints `<session-id>.<viewer-key>` as the pairing code.
-5. Host and phone authenticate during the WebSocket handshake with subprotocols `host.<key>` or `viewer.<key>` plus `pocketdesk-v1`.
-6. The Durable Object attaches the connection role to the hibernating socket and forwards only role-appropriate message types.
-7. The object rejects new handshakes after expiry. Stopping the host ends desktop access; persisted session data expires logically within 24 hours.
+1. On first enrollment, the host calls `POST /api/sessions` with the relay admin secret and stores its returned credential with Windows DPAPI for the current user.
+2. The Worker creates a random session ID, a 256-bit host key, and a 15-minute, one-use device invitation.
+3. A phone exchanges the invitation for its own 256-bit trusted-device key. The invitation hash is deleted atomically, and only the device-key hash is retained.
+4. The PC can create more named invitations, list trusted devices, and revoke any individual device through host-authenticated relay APIs.
+5. The signed-in host, secure worker, and phones authenticate during the WebSocket handshake with subprotocols `host.<key>`, `secure.<host-key>`, or `viewer.<device-key>` plus `pocketdesk-v1`.
+6. The Durable Object records the trusted device ID on the hibernating socket and forwards only role-appropriate message types. When the secure worker reports an actual sign-in/locked Winlogon desktop, it becomes the sole screen/input target and the regular host capture pauses. Revocation closes matching active sockets.
+7. Host and trusted phones reconnect without a session timer. The phone keeps its key in SecureStore (iOS Keychain/Android Keystore); removing a device deletes its relay-side hash.
 
 ## Data plane
 
@@ -48,6 +49,12 @@ Phone to host:
 - `ping` measures the round trip through the real host.
 
 The relay does not interpret frame bytes. It validates JSON message type allowlists and drops viewer binary messages.
+
+## Windows sign-in handoff
+
+The Service Control Manager starts `PocketDeskSecureHost` as LocalSystem before user login. The service duplicates only its own SYSTEM token, assigns it to the active physical-console session, and launches a hidden worker on `winsta0`. A dedicated worker thread opens the current input desktop and attaches with `SetThreadDesktop`; it never exposes an inbound PC port.
+
+The worker activates only when the input desktop is `Winlogon` and the console session is signed out or observed transitioning from its calibrated unlocked state. This distinction deliberately excludes UAC shown over an unlocked session. While active, the relay accepts only JPEG frames, `desktop-meta`, `secure-status`, `pong`, and errors from the secure role; viewer traffic is limited to validated pointer/key/text input, an explicit Windows secure-attention request, stream settings, quality, and ping. Shell, file, semantic, app, clipboard, and camera messages never reach the SYSTEM worker. Unlocking changes `secure-status`, resumes the regular host capture, and restores the mobile workspace automatically.
 
 ## Latency behavior
 

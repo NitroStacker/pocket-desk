@@ -19,6 +19,13 @@ const HOST_MESSAGE_TYPES = new Set([
   "file-download-error",
 ]);
 
+const SECURE_HOST_MESSAGE_TYPES = new Set([
+  "desktop-meta",
+  "secure-status",
+  "pong",
+  "error",
+]);
+
 const VIEWER_MESSAGE_TYPES = new Set([
   "input",
   "request-semantic",
@@ -40,7 +47,7 @@ const VIEWER_MESSAGE_TYPES = new Set([
 ]);
 
 export function isAllowedRelayMessage(
-  role: "host" | "viewer",
+  role: "host" | "secure" | "viewer",
   message: string,
 ): boolean {
   if (message.length > 128_000) return false;
@@ -48,9 +55,9 @@ export function isAllowedRelayMessage(
   try {
     const parsed: unknown = JSON.parse(message);
     if (!isRecord(parsed) || typeof parsed.type !== "string") return false;
-    return role === "host"
-      ? HOST_MESSAGE_TYPES.has(parsed.type)
-      : VIEWER_MESSAGE_TYPES.has(parsed.type);
+    if (role === "host") return HOST_MESSAGE_TYPES.has(parsed.type);
+    if (role === "secure") return SECURE_HOST_MESSAGE_TYPES.has(parsed.type);
+    return VIEWER_MESSAGE_TYPES.has(parsed.type);
   } catch {
     return false;
   }

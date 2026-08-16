@@ -2,6 +2,8 @@ node_modules/
 .expo/
 .wrangler/
 dist/
+bin/
+obj/
 coverage/
 *.log
 .dev.vars

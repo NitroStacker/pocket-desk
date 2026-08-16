@@ -155,8 +155,8 @@ export function HomeScreen({
           ) : !hostOnline ? (
             <EmptyState
               title="This pairing is offline"
-              body="PocketDesk reached the relay, but this session is not connected to your PC. Pair again with the latest code."
-              actionLabel="Pair again"
+              body="This PC is offline. PocketDesk will reconnect automatically when Windows and the host are available."
+              actionLabel="Forget PC"
               onPress={onPairAgain}
             />
           ) : shellSnapshot ? (
