@@ -198,14 +198,14 @@ export type InputCommand =
       y: number;
     }
   | { kind: 'moveRelative'; dx: number; dy: number }
-  | { kind: 'leftClick' | 'rightClick' }
+  | { kind: 'leftClick' | 'rightClick' | 'leftDown' | 'leftUp' }
   | { kind: 'scroll'; delta: number }
   | { kind: 'key'; key: string }
   | { kind: 'secureAttention' }
   | { kind: 'shortcut'; keys: string[] }
   | { kind: 'text'; text: string }
   | { kind: 'replaceText'; x: number; y: number; text: string }
-  | { kind: 'focusWindow'; processId: number; windowHandle: number };
+  | { kind: 'focusWindow' | 'closeWindow'; processId: number; windowHandle: number };
 
 export interface RemoteSessionApi {
   hasSession: boolean;

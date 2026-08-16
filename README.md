@@ -17,10 +17,11 @@ The phone app runs in Expo Go. Both the phone and the Windows host make outbound
 - Visual-region fallback that uses OCR only for segmentation, then stacks touchable crops of the actual selected window instead of exposing OCR fragments as controls
 - Direct phone-native editing of fields and documents, with updates applied to the corresponding desktop element
 - Full-screen adaptive JPEG desktop fallback at 3–5 FPS
-- Direct touch for pixel-perfect click-and-drag control
+- Chrome-style full-desktop controls with default trackpad movement, tap and two-finger clicks, locked two-finger scrolling, stable pinch zoom, double-tap drag, and optional direct touch with two-finger viewport panning
 - Trackpad, left/right click, scrolling, text paste, and common keyboard shortcuts
 - Automatic semantic refresh after interactions and while the mobile workspace is visible
 - Top-level Win32 window enumeration and handle-pinned selection, including File Explorer windows that are not exposed through `Process.MainWindowHandle`
+- Window-aware app launching that reuses an existing instance, offers a chooser when several windows are open, and supports closing one exact validated window from the phone
 - A dedicated File Explorer phone layout with real navigation, address/search fields, commands, tabs, folders, files, and status
 - Phone-native file management with thumbnails, copy, move, rename, delete, folder creation, and downloads through the iOS share sheet
 - A reusable adapter registry with tailored live layouts for Bezi, Chrome, ChatGPT/Codex, Windows Settings, Notepad and common document apps, and Windows Camera
@@ -152,7 +153,7 @@ Scan Expo's QR code with Expo Go, paste an add-device code created on the Window
 - **Home** — the default phone-sized Windows Start surface. Search apps and files, launch pinned taskbar apps, and jump into open windows.
 - **Apps toolbar** — opens a full library of current windows, taskbar pins, and Start menu shortcuts from anywhere in the app.
 - **Current** — the selected application's interface itself, reconstructed into a narrow responsive layout. Structured apps receive native tabs, menus, toolbars, editors, fields, lists, and status areas in their original order. Opaque apps receive touchable visual regions cropped from that real window.
-- **Desktop** — a full-screen pixel view for canvas-based or otherwise opaque interfaces. One finger controls the PC, two fingers pan the viewport, and a pinch zooms up to 400%. Copy, Paste, and a visible iOS-style text composer stay immediately below the desktop. At Windows sign-in, PocketDesk locks itself to this view and replaces clipboard controls with Ctrl Alt Del, Tab, a masked password field, and Sign in. Windows honors simulated Ctrl Alt Del only when its local software-SAS policy permits it.
+- **Desktop** — a full-screen pixel view for canvas-based or otherwise opaque interfaces. Trackpad mode moves the remote pointer with one finger, taps click, a second tap followed by movement drags, a two-finger tap right-clicks, and a two-finger swipe scrolls. Touch mode instead targets the point under the finger directly while two fingers pan or pinch the zoomed desktop viewport. Each two-finger gesture locks to exactly one intent until both fingers lift, preventing an intended pan from also changing zoom. Pinch zoom scales up to 400%. Copy, Paste, and a visible iOS-style text composer stay immediately below the desktop. At Windows sign-in, PocketDesk locks itself to this view and replaces clipboard controls with Ctrl Alt Del, Tab, a masked password field, and Sign in. Windows honors simulated Ctrl Alt Del only when its local software-SAS policy permits it.
 - **Input** — precision trackpad, mouse buttons, scrolling, a multiline visible text composer, Copy/Paste/Select All shortcuts, keyboard keys, and stream quality.
 
 ## Verification commands

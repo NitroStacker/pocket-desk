@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { initialWindowMetrics, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radii } from '../theme';
 import type { SemanticWindow, ShellApp, ShellSnapshot } from '../types';
 import { groupOpenWindows } from '../lib/windowApp';
@@ -11,14 +11,17 @@ interface Props {
   windows: SemanticWindow[];
   snapshot: ShellSnapshot | null;
   icons: Record<string, string>;
+  closingWindowHandles: number[];
   onClose: () => void;
-  onOpenWindow: (processId: number, windowHandle: number) => void;
+  onOpenApp: (groupKey: string) => void;
+  onCloseWindow: (processId: number, windowHandle: number) => void;
   onLaunch: (id: string) => void;
   onRefresh: () => void;
   onRequestIcons: (keys: string[]) => void;
 }
 
-export function AppLibraryModal({ visible, windows, snapshot, icons, onClose, onOpenWindow, onLaunch, onRefresh, onRequestIcons }: Props) {
+export function AppLibraryModal({ visible, windows, snapshot, icons, closingWindowHandles, onClose, onOpenApp, onCloseWindow, onLaunch, onRefresh, onRequestIcons }: Props) {
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [view, setView] = useState<'open' | 'all'>('open');
   const apps = snapshot?.apps ?? [];
@@ -35,6 +38,8 @@ export function AppLibraryModal({ visible, windows, snapshot, icons, onClose, on
       .toLocaleLowerCase()
       .includes(normalized);
   }), [windows, apps, normalized]);
+  const topInset = Math.max(insets.top, initialWindowMetrics?.insets.top ?? 0, Platform.OS === 'ios' ? 54 : 0);
+  const bottomInset = Math.max(insets.bottom, initialWindowMetrics?.insets.bottom ?? 0, Platform.OS === 'ios' ? 12 : 0);
 
   useEffect(() => {
     if (!visible) return;
@@ -46,7 +51,7 @@ export function AppLibraryModal({ visible, windows, snapshot, icons, onClose, on
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+      <View style={[styles.safeArea, { paddingTop: topInset, paddingBottom: bottomInset }]}>
         <View style={styles.header}>
           <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>POCKETDESK</Text>
@@ -72,15 +77,33 @@ export function AppLibraryModal({ visible, windows, snapshot, icons, onClose, on
               <SectionLabel title="Open now" count={openApps.length} />
               {openApps.length ? openApps.map((group) => {
                 const window = group.representative;
+                const closing = closingWindowHandles.includes(window.windowHandle);
                 const detail = group.windows.length > 1
-                  ? `${group.windows.length} windows · ${window.title}`
+                  ? `${group.windows.length} windows · choose one to continue`
                   : window.title;
                 return (
-                  <Pressable key={group.key} onPress={() => onOpenWindow(window.processId, window.windowHandle)} style={({ pressed }) => [styles.windowRow, window.active && styles.activeRow, pressed && styles.pressed]}>
-                    <RemoteIcon iconKey={group.iconKey} icons={icons} size={44} radius={12} active={window.active} />
-                    <View style={styles.rowCopy}><Text style={styles.rowTitle} numberOfLines={1}>{group.name}</Text><Text style={styles.rowDetail} numberOfLines={1}>{detail}</Text></View>
-                    <Text style={[styles.rowAction, window.active && styles.activeAction]}>{window.active ? 'Live' : 'Open'}</Text>
-                  </Pressable>
+                  <View key={group.key} style={[styles.windowRow, window.active && styles.activeRow]}>
+                    <Pressable
+                      onPress={() => onOpenApp(group.key)}
+                      style={({ pressed }) => [styles.windowOpen, pressed && styles.pressed]}
+                      accessibilityLabel={group.windows.length > 1 ? `Choose a ${group.name} window` : `Open ${group.name}`}
+                    >
+                      <RemoteIcon iconKey={group.iconKey} icons={icons} size={44} radius={12} active={window.active} />
+                      <View style={styles.rowCopy}><Text style={styles.rowTitle} numberOfLines={1}>{group.name}</Text><Text style={styles.rowDetail} numberOfLines={1}>{detail}</Text></View>
+                      <Text style={[styles.rowAction, window.active && styles.activeAction]}>{group.windows.length > 1 ? 'Choose' : window.active ? 'Live' : 'Open'}</Text>
+                    </Pressable>
+                    {group.windows.length === 1 ? (
+                      <Pressable
+                        onPress={() => onCloseWindow(window.processId, window.windowHandle)}
+                        disabled={closing}
+                        style={({ pressed }) => [styles.windowClose, closing && styles.disabled, pressed && styles.pressed]}
+                        accessibilityLabel={`Close ${window.title || group.name}`}
+                        hitSlop={4}
+                      >
+                        {closing ? <ActivityIndicator size="small" color={colors.danger} /> : <Text style={styles.windowCloseText}>×</Text>}
+                      </Pressable>
+                    ) : null}
+                  </View>
                 );
               }) : <Text style={styles.emptyText}>No desktop windows are open.</Text>}
             </>
@@ -100,7 +123,7 @@ export function AppLibraryModal({ visible, windows, snapshot, icons, onClose, on
             </>
           )}
         </ScrollView>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
@@ -137,7 +160,10 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colors.text, fontSize: 15, fontWeight: '700', flex: 1 },
   countBadge: { minWidth: 26, height: 21, borderRadius: 11, backgroundColor: colors.surfaceRaised, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7 },
   countText: { color: colors.textMuted, fontSize: 9, fontWeight: '700' },
-  windowRow: { minHeight: 64, borderRadius: radii.medium, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 9, marginBottom: 7, flexDirection: 'row', alignItems: 'center' },
+  windowRow: { minHeight: 64, borderRadius: radii.medium, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 5, marginBottom: 7, flexDirection: 'row', alignItems: 'center' },
+  windowOpen: { flex: 1, minHeight: 52, paddingLeft: 4, flexDirection: 'row', alignItems: 'center' },
+  windowClose: { width: 42, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
+  windowCloseText: { color: colors.danger, fontSize: 22, fontWeight: '400' },
   activeRow: { borderColor: colors.borderStrong, backgroundColor: colors.surfaceSoft },
   appIcon: { width: 46, height: 46, borderRadius: 14, backgroundColor: colors.surfaceSoft, alignItems: 'center', justifyContent: 'center' },
   appIconActive: { backgroundColor: colors.primary },
@@ -154,4 +180,5 @@ const styles = StyleSheet.create({
   pinLabel: { color: colors.textDim, fontSize: 7, fontWeight: '700', letterSpacing: 0.8, marginTop: 5 },
   emptyText: { color: colors.textMuted, fontSize: 11, lineHeight: 17, paddingVertical: 12 },
   pressed: { opacity: 0.7 },
+  disabled: { opacity: 0.48 },
 });

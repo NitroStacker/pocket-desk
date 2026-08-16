@@ -3,8 +3,9 @@ import { Alert, Animated, KeyboardAvoidingView, Modal, Platform, Pressable, Styl
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, radii } from '../theme';
 import type { RemoteSessionApi } from '../types';
-import { groupOpenWindows, resolveWindowIconKey, windowDisplayName } from '../lib/windowApp';
+import { groupOpenWindows, resolveWindowApp, resolveWindowIconKey, windowDisplayName } from '../lib/windowApp';
 import { AppLibraryModal } from './AppLibraryModal';
+import { AppWindowsModal } from './AppWindowsModal';
 import { adapterNeedsVisual, getAppAdapterKind } from './AppAdapters';
 import { ControlPanel } from './ControlPanel';
 import { DesktopInputBar } from './DesktopInputBar';
@@ -30,19 +31,28 @@ const MODES: Array<{ mode: Mode; label: string; glyph: string; detail: string }>
 export function RemoteScreen({ session }: Props) {
   const [mode, setMode] = useState<Mode>('home');
   const [appsVisible, setAppsVisible] = useState(false);
+  const [windowPickerKey, setWindowPickerKey] = useState<string | null>(null);
+  const [closingWindowHandles, setClosingWindowHandles] = useState<number[]>([]);
   const [menuVisible, setMenuVisible] = useState(false);
   const [desktopFit, setDesktopFit] = useState<'contain' | 'cover'>('contain');
   const transition = useRef(new Animated.Value(1)).current;
+  const closeTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
   const [pendingSelection, setPendingSelection] = useState<{
     afterCapturedAt: number;
     label: string;
     windowHandle?: number;
   } | null>(null);
   const windows = session.snapshot?.windows ?? [];
-  const openAppCount = useMemo(
-    () => groupOpenWindows(windows, session.shellSnapshot?.apps ?? []).length,
-    [windows, session.shellSnapshot],
-  );
+  const knownApps = useMemo(() => {
+    const byId = new Map((session.shellSnapshot?.apps ?? []).map((app) => [app.id, app]));
+    for (const app of session.shellResults?.apps ?? []) byId.set(app.id, app);
+    return [...byId.values()];
+  }, [session.shellSnapshot, session.shellResults]);
+  const openAppGroups = useMemo(() => groupOpenWindows(windows, knownApps), [windows, knownApps]);
+  const openAppCount = openAppGroups.length;
+  const windowPickerGroup = windowPickerKey
+    ? openAppGroups.find((group) => group.key === windowPickerKey) ?? null
+    : null;
   const activeWindow = useMemo(
     () => {
       const pendingWindow = pendingSelection?.windowHandle
@@ -70,8 +80,28 @@ export function RemoteScreen({ session }: Props) {
     if (!session.secureDesktopActive) return;
     setMode('desktop');
     setAppsVisible(false);
+    setWindowPickerKey(null);
     setMenuVisible(false);
   }, [session.secureDesktopActive]);
+
+  useEffect(() => {
+    const openHandles = new Set(windows.map((window) => window.windowHandle));
+    setClosingWindowHandles((current) => {
+      const next = current.filter((handle) => openHandles.has(handle));
+      for (const handle of current) {
+        if (openHandles.has(handle)) continue;
+        const timer = closeTimers.current.get(handle);
+        if (timer) clearTimeout(timer);
+        closeTimers.current.delete(handle);
+      }
+      return next.length === current.length ? current : next;
+    });
+  }, [windows]);
+
+  useEffect(() => () => {
+    for (const timer of closeTimers.current.values()) clearTimeout(timer);
+    closeTimers.current.clear();
+  }, []);
 
   useEffect(() => {
     if (!session.hostOnline) return;
@@ -165,14 +195,55 @@ export function RemoteScreen({ session }: Props) {
     });
     session.sendInput({ kind: 'focusWindow', processId, windowHandle });
     setAppsVisible(false);
+    setWindowPickerKey(null);
     setMode('mobile');
     setTimeout(session.refreshSemantic, 650);
+  };
+
+  const openApp = (groupKey: string) => {
+    const group = openAppGroups.find((candidate) => candidate.key === groupKey);
+    if (!group) return;
+    if (group.windows.length === 1) {
+      const window = group.windows[0];
+      openWindow(window.processId, window.windowHandle);
+      return;
+    }
+    setAppsVisible(false);
+    setWindowPickerKey(group.key);
+  };
+
+  const closeWindow = (processId: number, windowHandle: number) => {
+    if (closeTimers.current.has(windowHandle)) return;
+    if (session.snapshot?.activeWindowHandle === windowHandle) setPendingSelection(null);
+    setClosingWindowHandles((current) => [...current, windowHandle]);
+    session.sendInput({ kind: 'closeWindow', processId, windowHandle });
+    session.refreshSemantic();
+    setTimeout(session.refreshSemantic, 700);
+    const timer = setTimeout(() => {
+      closeTimers.current.delete(windowHandle);
+      setClosingWindowHandles((current) => current.filter((handle) => handle !== windowHandle));
+      Alert.alert(
+        'Window is still open',
+        'Windows may be waiting for a save confirmation on the PC. If Close never reacts, restart the PocketDesk host and try again.',
+      );
+    }, 6_000);
+    closeTimers.current.set(windowHandle, timer);
   };
 
   const launchItem = (id: string) => {
     const app = session.shellSnapshot?.apps.find((candidate) => candidate.id === id)
       ?? session.shellResults?.apps.find((candidate) => candidate.id === id);
     const file = session.shellResults?.files.find((candidate) => candidate.id === id);
+    const matchingWindow = app
+      ? windows.find((window) => resolveWindowApp(window, [app])?.id === app.id)
+      : null;
+    const openGroup = matchingWindow
+      ? openAppGroups.find((group) => group.windows.some((window) => window.windowHandle === matchingWindow.windowHandle))
+      : null;
+    if (openGroup) {
+      openApp(openGroup.key);
+      return;
+    }
     setPendingSelection({
       afterCapturedAt: session.snapshot?.capturedAt ?? 0,
       label: app?.name ?? file?.name ?? 'application',
@@ -206,9 +277,9 @@ export function RemoteScreen({ session }: Props) {
     ? 'Windows sign-in'
     : mode === 'home'
       ? 'PocketDesk'
-      : pendingSelection?.label ?? (activeWindow ? windowDisplayName(activeWindow, session.shellSnapshot?.apps ?? []) : null) ?? session.desktopMeta?.machineName ?? 'PocketDesk';
+      : pendingSelection?.label ?? (activeWindow ? windowDisplayName(activeWindow, knownApps) : null) ?? session.desktopMeta?.machineName ?? 'PocketDesk';
   const activeIconKey = activeWindow
-    ? resolveWindowIconKey(activeWindow, session.shellSnapshot?.apps ?? [])
+    ? resolveWindowIconKey(activeWindow, knownApps)
     : '';
 
   return (
@@ -264,7 +335,7 @@ export function RemoteScreen({ session }: Props) {
             icons={session.appIcons}
             onSearch={session.searchShell}
             onLaunch={launchItem}
-            onOpenWindow={openWindow}
+            onOpenApp={openApp}
             onOpenLibrary={() => setAppsVisible(true)}
             onRefresh={refreshAll}
             onPairAgain={forgetPC}
@@ -331,11 +402,21 @@ export function RemoteScreen({ session }: Props) {
         windows={windows}
         snapshot={session.shellSnapshot}
         icons={session.appIcons}
+        closingWindowHandles={closingWindowHandles}
         onClose={() => setAppsVisible(false)}
-        onOpenWindow={openWindow}
+        onOpenApp={openApp}
+        onCloseWindow={closeWindow}
         onLaunch={launchItem}
         onRefresh={refreshAll}
         onRequestIcons={session.requestIcons}
+      />
+      <AppWindowsModal
+        group={windowPickerGroup}
+        icons={session.appIcons}
+        closingWindowHandles={closingWindowHandles}
+        onDismiss={() => setWindowPickerKey(null)}
+        onOpenWindow={openWindow}
+        onCloseWindow={closeWindow}
       />
       </KeyboardAvoidingView>
     </SafeAreaView>

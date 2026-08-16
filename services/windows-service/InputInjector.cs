@@ -73,6 +73,16 @@ internal static class InputInjector
             Click(NativeMethods.MouseEventLeftDown, NativeMethods.MouseEventLeftUp);
             return;
         }
+        if (kind == "leftDown")
+        {
+            Mouse(NativeMethods.MouseEventLeftDown);
+            return;
+        }
+        if (kind == "leftUp")
+        {
+            Mouse(NativeMethods.MouseEventLeftUp);
+            return;
+        }
         if (kind == "rightClick")
         {
             Click(NativeMethods.MouseEventRightDown, NativeMethods.MouseEventRightUp);
