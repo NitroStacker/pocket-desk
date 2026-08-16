@@ -98,6 +98,12 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
                 [PocketDeskNative]::mouse_event($MouseLeftDown, 0, 0, 0, [UIntPtr]::Zero)
                 [PocketDeskNative]::mouse_event($MouseLeftUp, 0, 0, 0, [UIntPtr]::Zero)
             }
+            'leftDown' {
+                [PocketDeskNative]::mouse_event($MouseLeftDown, 0, 0, 0, [UIntPtr]::Zero)
+            }
+            'leftUp' {
+                [PocketDeskNative]::mouse_event($MouseLeftUp, 0, 0, 0, [UIntPtr]::Zero)
+            }
             'rightClick' {
                 [PocketDeskNative]::mouse_event($MouseRightDown, 0, 0, 0, [UIntPtr]::Zero)
                 [PocketDeskNative]::mouse_event($MouseRightUp, 0, 0, 0, [UIntPtr]::Zero)

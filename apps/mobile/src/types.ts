@@ -198,7 +198,7 @@ export type InputCommand =
       y: number;
     }
   | { kind: 'moveRelative'; dx: number; dy: number }
-  | { kind: 'leftClick' | 'rightClick' }
+  | { kind: 'leftClick' | 'rightClick' | 'leftDown' | 'leftUp' }
   | { kind: 'scroll'; delta: number }
   | { kind: 'key'; key: string }
   | { kind: 'secureAttention' }

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 type InputCommand =
   | { kind: "pointerDown" | "pointerMove" | "pointerUp" | "tap" | "doubleClick"; x: number; y: number }
   | { kind: "moveRelative"; dx: number; dy: number }
-  | { kind: "leftClick" | "rightClick" }
+  | { kind: "leftClick" | "rightClick" | "leftDown" | "leftUp" }
   | { kind: "scroll"; delta: number }
   | { kind: "key"; key: string }
   | { kind: "shortcut"; keys: string[] }
@@ -107,7 +107,12 @@ export function parseInputCommand(value: unknown): InputCommand | null {
     };
   }
 
-  if (value.kind === "leftClick" || value.kind === "rightClick") {
+  if (
+    value.kind === "leftClick" ||
+    value.kind === "rightClick" ||
+    value.kind === "leftDown" ||
+    value.kind === "leftUp"
+  ) {
     return { kind: value.kind };
   }
 

@@ -21,6 +21,8 @@ describe("desktop input validation", () => {
       parseInputCommand({ kind: "closeWindow", processId: 2840, windowHandle: 133502 }),
       { kind: "closeWindow", processId: 2840, windowHandle: 133502 },
     );
+    assert.deepEqual(parseInputCommand({ kind: "leftDown" }), { kind: "leftDown" });
+    assert.deepEqual(parseInputCommand({ kind: "leftUp" }), { kind: "leftUp" });
   });
 
   it("rejects out-of-bounds or unknown commands", () => {

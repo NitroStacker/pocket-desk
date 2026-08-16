@@ -370,7 +370,7 @@ function handleRelayMessage(raw: string): void {
 
 function shouldRefreshAfterInput(value: unknown): boolean {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
-  return !["pointerDown", "pointerMove", "moveRelative"].includes(value.kind);
+  return !["pointerDown", "pointerMove", "moveRelative", "leftDown"].includes(value.kind);
 }
 
 function scheduleSemanticRefresh(): void {
