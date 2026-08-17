@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { colors } from '../theme';
 import type { AppVisual, CameraControlCommand, CameraPtzStatus, InputCommand, SemanticControl, SemanticSnapshot } from '../types';
+import { AuroraFxApplication } from './AuroraFxApplication';
 
 export type AppAdapterKind =
   | 'file-explorer'
@@ -22,6 +23,7 @@ export type AppAdapterKind =
   | 'chatgpt'
   | 'settings'
   | 'document'
+  | 'aurora-fx'
   | 'camera';
 
 interface AdapterProps {
@@ -57,6 +59,7 @@ const GENERIC_LABEL = /^(accessibilitytext|button|text|image|window|pane|group|c
 export function getAppAdapterKind(process: string, title: string): AppAdapterKind | null {
   const identity = `${process} ${title}`.toLocaleLowerCase();
   if (/\bexplorer\b/.test(process.toLocaleLowerCase()) || /file explorer/.test(identity)) return 'file-explorer';
+  if (/aurorafxcontrol|aurora fx control/.test(identity)) return 'aurora-fx';
   if (/windowscamera|\bcamera\b/.test(identity)) return 'camera';
   if (/systemsettings|\bsettings\b/.test(identity)) return 'settings';
   if (/\bbezi\b/.test(identity)) return 'bezi';
@@ -72,6 +75,7 @@ export function adapterNeedsVisual(process: string, title: string): boolean {
 }
 
 export function SpecializedApplication({ kind, ...props }: AdapterProps) {
+  if (kind === 'aurora-fx') return <AuroraFxApplication snapshot={props.snapshot} onInput={props.onInput} onRefresh={props.onRefresh} />;
   if (kind === 'bezi') return <BeziApplication {...props} />;
   if (kind === 'chrome') return <ChromeApplication {...props} />;
   if (kind === 'chatgpt') return <ChatGptApplication {...props} />;

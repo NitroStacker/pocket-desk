@@ -20,6 +20,25 @@ $sources = @(
 )
 
 $entries = New-Object System.Collections.Generic.List[object]
+$defaultAuroraFxPath = 'C:\Users\retro\Documents\Codex\2026-08-16\i-have-an-alienware-r15-pc\publish\AuroraFxControl.exe'
+$auroraFxPath = if ([string]::IsNullOrWhiteSpace($env:POCKETDESK_AURORA_FX_PATH)) {
+    $defaultAuroraFxPath
+}
+else {
+    [Environment]::ExpandEnvironmentVariables($env:POCKETDESK_AURORA_FX_PATH.Trim().Trim('"'))
+}
+if (Test-Path -LiteralPath $auroraFxPath -PathType Leaf) {
+    $entries.Add([PSCustomObject]@{
+        name = 'Aurora FX'
+        category = 'Lighting'
+        pinned = $true
+        shortcutPath = $auroraFxPath
+        targetPath = $auroraFxPath
+        iconPath = Join-Path $PSScriptRoot '..\assets\aurora-fx-control.png'
+        arguments = ''
+    })
+}
+
 $shortcutReader = New-Object -ComObject WScript.Shell
 foreach ($source in $sources) {
     if (-not (Test-Path -LiteralPath $source.Path)) { continue }
