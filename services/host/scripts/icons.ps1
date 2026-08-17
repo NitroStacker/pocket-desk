@@ -120,6 +120,12 @@ function Read-IconPng([string]$Path) {
     $reference = Resolve-IconReference $Path
     if ($null -eq $reference) { return $null }
 
+    if ([IO.Path]::GetExtension([string]$reference.Path) -match '(?i)^\.(png|bmp|gif|jpe?g)$') {
+        $source = [System.Drawing.Image]::FromFile([string]$reference.Path)
+        try { return Convert-BitmapPng $source }
+        finally { $source.Dispose() }
+    }
+
     $handles = New-Object IntPtr[] 1
     $iconIds = New-Object uint32[] 1
     $count = [PocketDeskIconNative]::PrivateExtractIcons(

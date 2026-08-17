@@ -37,6 +37,7 @@ interface RawApp {
   pinned?: unknown;
   shortcutPath?: unknown;
   targetPath?: unknown;
+  iconPath?: unknown;
   arguments?: unknown;
   appUserModelId?: unknown;
 }
@@ -51,6 +52,7 @@ interface RawFile {
 export class ShellController {
   private apps: ShellApp[] = [];
   private readonly appPaths = new Map<string, string>();
+  private readonly appIconPaths = new Map<string, string>();
   private readonly appNames = new Map<string, string>();
   private readonly appProcesses = new Map<string, string>();
   private readonly appUserModelIds = new Map<string, string>();
@@ -69,18 +71,21 @@ export class ShellController {
       const raw = parseArray<RawApp>(stdout);
       const nextApps: ShellApp[] = [];
       const nextPaths = new Map<string, string>();
+      const nextIconPaths = new Map<string, string>();
       const nextProcesses = new Map<string, string>();
       const nextAppUserModelIds = new Map<string, string>();
 
       for (const entry of raw) {
         const name = clean(entry.name, 120);
         const shortcutPath = clean(entry.shortcutPath, 1_024);
+        const iconPath = clean(entry.iconPath, 1_024);
         const appUserModelId = clean(entry.appUserModelId, 300);
         if (!name || (!shortcutPath && !isAppUserModelId(appUserModelId))) continue;
         const identityTarget = shortcutPath || `aumid:${appUserModelId}`;
         const id = opaqueId("app", identityTarget);
         if (nextPaths.has(id)) continue;
         if (shortcutPath) nextPaths.set(id, shortcutPath);
+        if (iconPath) nextIconPaths.set(id, iconPath);
         if (appUserModelId) nextAppUserModelIds.set(id, appUserModelId);
         const expectedProcess = inferProcessName(
           name,
@@ -100,11 +105,14 @@ export class ShellController {
 
       this.apps = nextApps.slice(0, 450);
       this.appPaths.clear();
+      this.appIconPaths.clear();
       this.appNames.clear();
       this.appProcesses.clear();
       this.appUserModelIds.clear();
       for (const [id, target] of nextPaths) {
         this.appPaths.set(id, target);
+        const iconPath = nextIconPaths.get(id);
+        if (iconPath) this.appIconPaths.set(id, iconPath);
         const app = this.apps.find((candidate) => candidate.id === id);
         if (app) this.appNames.set(id, app.name);
         const expectedProcess = nextProcesses.get(id);
@@ -177,6 +185,8 @@ export class ShellController {
   getIconTarget(key: string): IconTarget | null {
     const match = /^app:([a-f0-9]{24})$/.exec(key);
     if (!match) return null;
+    const iconPath = this.appIconPaths.get(match[1]);
+    if (iconPath) return { key, path: iconPath };
     const target = this.appPaths.get(match[1]);
     if (target) return { key, path: target };
     const appUserModelId = this.appUserModelIds.get(match[1]);

@@ -52,4 +52,28 @@ describe("desktop input validation", () => {
       null,
     );
   });
+
+  it("accepts only bounded Aurora FX controls", () => {
+    assert.deepEqual(
+      parseInputCommand({ kind: "aurora", action: "setColor", color: "#51e5ff" }),
+      { kind: "aurora", action: "setColor", color: "#51E5FF" },
+    );
+    assert.deepEqual(
+      parseInputCommand({ kind: "aurora", action: "setBrightness", value: 140 }),
+      { kind: "aurora", action: "setBrightness", value: 100 },
+    );
+    assert.deepEqual(
+      parseInputCommand({ kind: "aurora", action: "setZone", zone: "Bezel outer ring", enabled: true }),
+      { kind: "aurora", action: "setZone", zone: "Bezel outer ring", enabled: true },
+    );
+    assert.equal(parseInputCommand({ kind: "aurora", action: "setColor", color: "red" }), null);
+    assert.equal(
+      parseInputCommand({ kind: "aurora", action: "setZone", zone: "Firmware", enabled: true }),
+      null,
+    );
+    assert.equal(
+      parseInputCommand({ kind: "aurora", action: "setCustomIds", text: "73; Remove-Item" }),
+      null,
+    );
+  });
 });

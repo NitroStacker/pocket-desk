@@ -20,6 +20,7 @@ The phone app runs in Expo Go. Both the phone and the Windows host make outbound
 - Chrome-style full-desktop controls with default trackpad movement, tap and two-finger clicks, locked two-finger scrolling, stable pinch zoom, double-tap drag, and optional direct touch with two-finger viewport panning
 - Trackpad, left/right click, scrolling, text paste, and common keyboard shortcuts
 - Automatic semantic refresh after interactions and while the mobile workspace is visible
+- Native Aurora FX controls with a case-zone diagram, HSV color picker, effects, brightness, speed, custom LED IDs, and direct apply/off actions
 - Top-level Win32 window enumeration and handle-pinned selection, including File Explorer windows that are not exposed through `Process.MainWindowHandle`
 - Window-aware app launching that reuses an existing instance, offers a chooser when several windows are open, and supports closing one exact validated window from the phone
 - A dedicated File Explorer phone layout with real navigation, address/search fields, commands, tabs, folders, files, and status
@@ -105,6 +106,10 @@ npm run host -- --relay https://example.workers.dev --admin '<token>' --profile 
 ```
 
 Profiles are `smooth`, `balanced`, or `sharp` and can also be changed from the phone. A short-lived session is still available with `--temporary true --expires 8`. Use `--reset-pairing true` only when you need to replace the host enrollment.
+
+The Aurora FX LED controller is included as a favorite when its executable is present. If it moves, set `POCKETDESK_AURORA_FX_PATH` to the new `AuroraFxControl.exe` path before starting the host.
+
+When Aurora FX is open, PocketDesk uses its dedicated mobile controller instead of generic UI reflow. Commands are schema-validated by the host and delivered to the running desktop app over its local named pipe; the desktop app remains the only component that talks to the AW-ELC hardware.
 
 ### Trusted devices on the PC
 

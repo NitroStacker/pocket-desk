@@ -10,6 +10,13 @@ type InputCommand =
   | { kind: "shortcut"; keys: string[] }
   | { kind: "text"; text: string }
   | { kind: "replaceText"; x: number; y: number; text: string }
+  | { kind: "aurora"; action: "scan" | "apply" | "off" }
+  | { kind: "aurora"; action: "setColor"; color: string }
+  | { kind: "aurora"; action: "setEffect"; effect: "Static" | "Breathe" | "Pulse" | "Spectrum" }
+  | { kind: "aurora"; action: "setBrightness" | "setSpeed"; value: number }
+  | { kind: "aurora"; action: "setZone"; zone: string; enabled: boolean }
+  | { kind: "aurora"; action: "setCustomEnabled"; enabled: boolean }
+  | { kind: "aurora"; action: "setCustomIds"; text: string }
   | { kind: "focusWindow"; processId: number; windowHandle?: number }
   | { kind: "closeWindow"; processId: number; windowHandle: number };
 
@@ -148,6 +155,48 @@ export function parseInputCommand(value: unknown): InputCommand | null {
     return { kind: "replaceText", x: value.x, y: value.y, text: value.text };
   }
 
+  if (value.kind === "aurora" && typeof value.action === "string") {
+    if (value.action === "scan" || value.action === "apply" || value.action === "off") {
+      return { kind: "aurora", action: value.action };
+    }
+    if (value.action === "setColor" && typeof value.color === "string" && /^#[A-Fa-f0-9]{6}$/.test(value.color)) {
+      return { kind: "aurora", action: "setColor", color: value.color.toUpperCase() };
+    }
+    if (
+      value.action === "setEffect" &&
+      (value.effect === "Static" || value.effect === "Breathe" || value.effect === "Pulse" || value.effect === "Spectrum")
+    ) {
+      return { kind: "aurora", action: "setEffect", effect: value.effect };
+    }
+    if (
+      (value.action === "setBrightness" || value.action === "setSpeed") &&
+      isFiniteNumber(value.value)
+    ) {
+      const minimum = value.action === "setBrightness" ? 0 : 1;
+      return { kind: "aurora", action: value.action, value: Math.round(clamp(value.value, minimum, 100)) };
+    }
+    if (
+      value.action === "setZone" &&
+      typeof value.zone === "string" &&
+      AURORA_ZONES.has(value.zone) &&
+      typeof value.enabled === "boolean"
+    ) {
+      return { kind: "aurora", action: "setZone", zone: value.zone, enabled: value.enabled };
+    }
+    if (value.action === "setCustomEnabled" && typeof value.enabled === "boolean") {
+      return { kind: "aurora", action: "setCustomEnabled", enabled: value.enabled };
+    }
+    if (
+      value.action === "setCustomIds" &&
+      typeof value.text === "string" &&
+      value.text.length <= 300 &&
+      /^[0-9A-Fa-fxX,;\-\s]*$/.test(value.text)
+    ) {
+      return { kind: "aurora", action: "setCustomIds", text: value.text };
+    }
+    return null;
+  }
+
   if (
     (value.kind === "focusWindow" || value.kind === "closeWindow") &&
     typeof value.processId === "number" &&
@@ -170,6 +219,16 @@ export function parseInputCommand(value: unknown): InputCommand | null {
 
   return null;
 }
+
+const AURORA_ZONES = new Set([
+  "Internal chassis",
+  "Fan / liquid cooler",
+  "Alienware wordmark",
+  "Power button",
+  "Bezel inner ring",
+  "Bezel outer ring",
+  "Every mapped LED",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

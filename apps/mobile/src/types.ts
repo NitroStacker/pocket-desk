@@ -214,6 +214,13 @@ export type InputCommand =
   | { kind: 'shortcut'; keys: string[] }
   | { kind: 'text'; text: string }
   | { kind: 'replaceText'; x: number; y: number; text: string }
+  | { kind: 'aurora'; action: 'scan' | 'apply' | 'off' }
+  | { kind: 'aurora'; action: 'setColor'; color: string }
+  | { kind: 'aurora'; action: 'setEffect'; effect: 'Static' | 'Breathe' | 'Pulse' | 'Spectrum' }
+  | { kind: 'aurora'; action: 'setBrightness' | 'setSpeed'; value: number }
+  | { kind: 'aurora'; action: 'setZone'; zone: string; enabled: boolean }
+  | { kind: 'aurora'; action: 'setCustomEnabled'; enabled: boolean }
+  | { kind: 'aurora'; action: 'setCustomIds'; text: string }
   | { kind: 'focusWindow' | 'closeWindow'; processId: number; windowHandle: number };
 
 export interface RemoteSessionApi {

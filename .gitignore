@@ -5,6 +5,7 @@ dist/
 bin/
 obj/
 coverage/
+tmp/
 *.log
 .dev.vars
 .env

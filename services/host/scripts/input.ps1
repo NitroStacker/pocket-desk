@@ -57,6 +57,24 @@ function Send-KeyUp([byte]$code) {
     [PocketDeskNative]::keybd_event($code, 0, $KeyUp, [UIntPtr]::Zero)
 }
 
+function Send-AuroraCommand($command) {
+    $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(
+        '.',
+        'PocketDesk.AuroraFxControl',
+        [System.IO.Pipes.PipeDirection]::Out
+    )
+    try {
+        $pipe.Connect(1000)
+        $writer = New-Object System.IO.StreamWriter($pipe)
+        try {
+            $writer.AutoFlush = $true
+            $writer.WriteLine(($command | ConvertTo-Json -Compress))
+        }
+        finally { $writer.Dispose() }
+    }
+    finally { $pipe.Dispose() }
+}
+
 while ($null -ne ($line = [Console]::In.ReadLine())) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
 
@@ -148,6 +166,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
                     Send-KeyUp 0x11
                 }
             }
+            'aurora' { Send-AuroraCommand $command }
             'focusWindow' {
                 $process = Get-Process -Id ([int]$command.processId) -ErrorAction Stop
                 $window = $process.MainWindowHandle
